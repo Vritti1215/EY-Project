@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Create Account — AI Assistant Portal{% endblock %}
+{% block body %}
+<div class="min-h-screen flex items-center justify-center px-4 py-8 bg-surface-50 dark:bg-surface-950">
+    <div class="w-full max-w-md animate-slide-up">
+        <div class="text-center mb-8">
+            <a href="/" class="inline-flex items-center gap-2.5">
+                <div class="w-10 h-10 rounded-btn bg-brand-600 flex items-center justify-center shadow-btn">
+                    <i data-lucide="bot" class="w-5 h-5 text-[#2E2E38]"></i>
+                </div>
+                <span class="text-lg font-bold text-brand-600 dark:text-brand-400">AI Assistant</span>
+            </a>
+        </div>
+        <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-8">
+            <h1 class="text-xl font-bold text-surface-900 dark:text-white text-center mb-1">Create Account</h1>
+            <p class="text-sm text-surface-500 text-center mb-6">Join the AI Assistant Portal</p>
+            <form method="POST" action="/register" class="space-y-4">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div>
+                    <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Username</label>
+                    <div class="relative">
+                        <i data-lucide="user" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-surface-400"></i>
+                        <input type="text" name="username" required value="{{ username if username else '' }}" placeholder="Choose a username"
+                            class="w-full pl-10 pr-4 py-2.5 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-input text-sm text-surface-900 dark:text-white placeholder-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 shadow-input transition-all">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Email Address</label>
+                    <div class="relative">
+                        <i data-lucide="mail" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-surface-400"></i>
+                        <input type="email" name="email" required value="{{ email if email else '' }}" placeholder="you@company.com"
+                            class="w-full pl-10 pr-4 py-2.5 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-input text-sm text-surface-900 dark:text-white placeholder-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 shadow-input transition-all">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Password</label>
+                    <div class="relative">
+                        <i data-lucide="lock" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-surface-400"></i>
+                        <input type="password" name="password" required placeholder="Create a password"
+                            class="w-full pl-10 pr-4 py-2.5 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-input text-sm text-surface-900 dark:text-white placeholder-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 shadow-input transition-all">
+                    </div>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-surface-700 dark:text-surface-300 mb-1.5">Confirm Password</label>
+                    <div class="relative">
+                        <i data-lucide="shield-check" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-surface-400"></i>
+                        <input type="password" name="confirm_password" required placeholder="Confirm your password"
+                            class="w-full pl-10 pr-4 py-2.5 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-input text-sm text-surface-900 dark:text-white placeholder-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 shadow-input transition-all">
+                    </div>
+                </div>
+                <button type="submit" class="w-full bg-brand-600 hover:bg-brand-700 py-2.5 text-sm font-semibold text-[#2E2E38] rounded-btn shadow-btn hover:shadow-btn-hover transition-all flex items-center justify-center gap-2">
+                    <i data-lucide="user-plus" class="w-4 h-4"></i> Create Account
+                </button>
+            </form>
+            <p class="text-sm text-surface-500 text-center mt-5">Already have an account? <a href="/login" class="text-brand-600 hover:text-brand-700 font-medium">Sign in</a></p>
+        </div>
+        <p class="text-center mt-4"><a href="/" class="text-sm text-surface-400 hover:text-surface-600 transition-colors">← Back to Home</a></p>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}File Analysis — AI Assistant Portal{% endblock %}
+{% block body %}
+<div class="flex h-screen overflow-hidden bg-surface-50 dark:bg-surface-950">
+    {% include 'partials/sidebar.html' %}
+    <main class="flex-1 overflow-y-auto p-6 lg:p-8">
+        <div class="max-w-4xl mx-auto">
+            <div class="mb-8">
+                <h1 class="text-2xl font-bold text-surface-900 dark:text-white mb-1">File Upload & Analysis</h1>
+                <p class="text-surface-500 dark:text-surface-400 text-sm">Upload documents for AI-powered analysis, summarization, and Q&A</p>
+            </div>
+
+            <!-- Upload Area -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card p-6 shadow-card mb-6">
+                <div id="drop-zone"
+                     class="border-2 border-dashed border-surface-200 dark:border-surface-700 rounded-card p-12 text-center cursor-pointer transition-colors hover:border-brand-400 dark:hover:border-brand-500 hover:bg-brand-50/50 dark:hover:bg-brand-950/20"
+                     onclick="document.getElementById('file-input').click()"
+                     ondragover="event.preventDefault();this.classList.add('border-brand-400','bg-brand-50/50')"
+                     ondragleave="this.classList.remove('border-brand-400','bg-brand-50/50')"
+                     ondrop="handleDrop(event)">
+                    <div class="w-12 h-12 rounded-full bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center mx-auto mb-4">
+                        <i data-lucide="cloud-upload" class="w-6 h-6 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                    <h3 class="text-sm font-semibold text-surface-900 dark:text-white mb-1">Drop files here or click to upload</h3>
+                    <p class="text-xs text-surface-500">Supports PDF, DOCX, TXT, CSV — Max 16MB</p>
+                    <input type="file" id="file-input" class="hidden" accept=".pdf,.docx,.txt,.csv,.xlsx,.xls" onchange="uploadFile(this.files[0])">
+                </div>
+                <div id="upload-progress" class="hidden mt-4">
+                    <div class="flex items-center gap-3">
+                        <div class="flex-1 h-1.5 bg-surface-100 dark:bg-surface-800 rounded-full overflow-hidden">
+                            <div id="progress-bar" class="h-full bg-brand-600 rounded-full transition-all duration-300" style="width:0%"></div>
+                        </div>
+                        <span id="progress-text" class="text-xs font-medium text-surface-500">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analysis Result -->
+            <div id="analysis-result" class="hidden bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card p-6 shadow-card mb-6">
+                <h3 class="text-sm font-semibold text-surface-900 dark:text-white mb-4 flex items-center gap-2">
+                    <i data-lucide="file-search" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>Analysis Result
+                </h3>
+                <div id="result-content" class="text-sm text-surface-700 dark:text-surface-300 prose-ai"></div>
+                <div class="mt-6 pt-4 border-t border-surface-100 dark:border-surface-800">
+                    <h4 class="text-xs font-semibold text-surface-600 dark:text-surface-400 mb-3">Ask about this document</h4>
+                    <div class="flex gap-3">
+                        <input type="text" id="qa-input" placeholder="Ask a question..."
+                            class="flex-1 px-4 py-2.5 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-input text-sm text-surface-900 dark:text-white placeholder-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all">
+                        <button onclick="askQuestion()" class="bg-brand-600 hover:bg-brand-700 px-5 py-2.5 rounded-btn text-sm font-medium text-[#2E2E38] shadow-btn hover:shadow-btn-hover transition-all">Ask</button>
+                    </div>
+                    <div id="qa-answer" class="hidden mt-4 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-btn p-4 text-sm text-surface-700 dark:text-surface-300 prose-ai"></div>
+                </div>
+            </div>
+
+            <!-- Upload History -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card p-6 shadow-card">
+                <h3 class="text-sm font-semibold text-surface-900 dark:text-white mb-4 flex items-center gap-2">
+                    <i data-lucide="history" class="w-4 h-4 text-surface-500"></i>Upload History
+                </h3>
+                <div id="file-list" class="space-y-2">
+                    {% for file in files %}
+                    <div class="flex items-center gap-4 p-3 rounded-btn border border-surface-100 dark:border-surface-800 hover:bg-surface-50 dark:hover:bg-surface-800/50 transition-colors group" data-file-id="{{ file.id }}">
+                        <div class="w-10 h-10 rounded-btn flex items-center justify-center flex-shrink-0
+                            {% if file.file_type == 'pdf' %}bg-red-50 dark:bg-red-950/30{% elif file.file_type == 'docx' %}bg-blue-50 dark:bg-blue-950/30{% elif file.file_type == 'csv' %}bg-emerald-50 dark:bg-emerald-950/30{% else %}bg-surface-100 dark:bg-surface-800{% endif %}">
+                            <i data-lucide="file-text" class="w-5 h-5
+                                {% if file.file_type == 'pdf' %}text-red-600 dark:text-red-400{% elif file.file_type == 'docx' %}text-blue-600 dark:text-blue-400{% elif file.file_type == 'csv' %}text-emerald-600 dark:text-emerald-400{% else %}text-surface-500{% endif %}"></i>
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-medium text-surface-900 dark:text-white truncate">{{ file.filename }}</p>
+                            <p class="text-xs text-surface-500">{{ file.file_type | upper }} • {{ file.upload_date.strftime('%b %d, %Y') }}</p>
+                        </div>
+                        <div class="flex gap-1">
+                            <button onclick="viewFileDetails({{ file.id }})" class="p-2 rounded-btn text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-all" title="View">
+                                <i data-lucide="eye" class="w-4 h-4"></i>
+                            </button>
+                            <button onclick="deleteFile({{ file.id }})" class="p-2 rounded-btn text-surface-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all opacity-0 group-hover:opacity-100" title="Delete">
+                                <i data-lucide="trash-2" class="w-4 h-4"></i>
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                    {% if not files %}
+                    <div class="text-center py-10">
+                        <div class="w-12 h-12 rounded-full bg-surface-100 dark:bg-surface-800 flex items-center justify-center mx-auto mb-3">
+                            <i data-lucide="folder-open" class="w-6 h-6 text-surface-400"></i>
+                        </div>
+                        <p class="text-sm text-surface-500">No files uploaded yet</p>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+const CSRF='{{ csrf_token() }}';let currentFileId=null;
+function handleDrop(e){e.preventDefault();e.currentTarget.classList.remove('border-brand-400','bg-brand-50/50');if(e.dataTransfer.files.length)uploadFile(e.dataTransfer.files[0]);}
+async function uploadFile(file){if(!file)return;const allowed=['pdf','docx','txt','csv'];const ext=file.name.split('.').pop().toLowerCase();
+if(!allowed.includes(ext)){alert('Unsupported file type');return;}
+if(file.size>16*1024*1024){alert('File too large (max 16MB)');return;}
+const prog=document.getElementById('upload-progress');const bar=document.getElementById('progress-bar');const txt=document.getElementById('progress-text');
+prog.classList.remove('hidden');bar.style.width='30%';txt.textContent='Uploading...';
+const fd=new FormData();fd.append('file',file);
+try{bar.style.width='60%';txt.textContent='Processing...';
+const r=await fetch('/uploads/upload',{method:'POST',headers:{'X-CSRFToken':CSRF},body:fd});
+const d=await r.json();bar.style.width='100%';txt.textContent='Complete!';
+if(d.success){currentFileId=d.file_id;
+const res=document.getElementById('analysis-result');const rc=document.getElementById('result-content');
+res.classList.remove('hidden');
+rc.innerHTML=`<div class="mb-3"><span class="text-xs font-medium text-brand-600 dark:text-brand-400">${d.filename}</span> <span class="text-xs text-surface-500">${d.file_type.toUpperCase()} • ${d.file_size}</span></div>`;
+if(d.summary)rc.innerHTML+=`<h4 class="text-xs font-semibold text-surface-600 dark:text-surface-400 mb-2">AI Summary</h4><div class="text-sm text-surface-700 dark:text-surface-300">${marked.parse(d.summary)}</div>`;
+rc.innerHTML+=`<details class="mt-4"><summary class="text-xs text-surface-500 cursor-pointer hover:text-surface-900 dark:hover:text-white transition-colors">View extracted text</summary><pre class="mt-2 text-xs text-surface-500 whitespace-pre-wrap max-h-48 overflow-y-auto bg-surface-50 dark:bg-surface-800 p-3 rounded-btn">${d.text_preview}</pre></details>`;
+setTimeout(()=>location.reload(),2000);
+}else{alert(d.error||'Upload failed');}
+}catch(e){alert('Upload error: '+e.message);}
+setTimeout(()=>prog.classList.add('hidden'),3000);}
+async function askQuestion(){if(!currentFileId)return;const q=document.getElementById('qa-input').value.trim();if(!q)return;
+const ans=document.getElementById('qa-answer');ans.classList.remove('hidden');ans.innerHTML='<div class="typing-dots"><span></span><span></span><span></span></div>';
+try{const r=await fetch(`/uploads/ask/${currentFileId}`,{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':CSRF},body:JSON.stringify({question:q})});
+const d=await r.json();ans.innerHTML=d.success?marked.parse(d.answer):d.error;
+}catch(e){ans.textContent='Error: '+e.message;}}
+async function viewFileDetails(id){currentFileId=id;
+try{const r=await fetch(`/uploads/details/${id}`);const d=await r.json();
+if(d.success){const f=d.file;const res=document.getElementById('analysis-result');const rc=document.getElementById('result-content');
+res.classList.remove('hidden');
+rc.innerHTML=`<div class="mb-3"><span class="text-xs font-medium text-brand-600 dark:text-brand-400">${f.filename}</span> <span class="text-xs text-surface-500">${f.file_type.toUpperCase()} • ${f.file_size} • ${f.upload_date}</span></div>`;
+if(f.summary)rc.innerHTML+=`<h4 class="text-xs font-semibold text-surface-600 dark:text-surface-400 mb-2">AI Summary</h4><div class="text-sm text-surface-700 dark:text-surface-300">${marked.parse(f.summary)}</div>`;
+if(f.text_preview)rc.innerHTML+=`<details class="mt-4"><summary class="text-xs text-surface-500 cursor-pointer hover:text-surface-900 dark:hover:text-white">View extracted text</summary><pre class="mt-2 text-xs text-surface-500 whitespace-pre-wrap max-h-48 overflow-y-auto bg-surface-50 dark:bg-surface-800 p-3 rounded-btn">${f.text_preview}</pre></details>`;
+res.scrollIntoView({behavior:'smooth'});}}catch(e){console.error(e);}}
+async function deleteFile(id){if(!confirm('Delete this file?'))return;
+try{await fetch(`/uploads/delete/${id}`,{method:'DELETE',headers:{'X-CSRFToken':CSRF}});
+document.querySelector(`[data-file-id="${id}"]`)?.remove();}catch(e){console.error(e);}}
+</script>
+{% endblock %}

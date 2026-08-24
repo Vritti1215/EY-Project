@@ -1,0 +1,320 @@
+{% extends 'base.html' %}
+{% block title %}Analytics Dashboard — AI Assistant{% endblock %}
+
+{% block body %}
+<div class="flex h-screen overflow-hidden">
+    {% include 'partials/sidebar.html' %}
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto p-8">
+        <!-- Page Header -->
+        <div class="mb-8 animate-fade-in">
+            <h1 class="text-2xl font-bold text-surface-900 dark:text-white">Analytics Dashboard</h1>
+            <p class="text-sm text-surface-500 dark:text-surface-400 mt-1">Monitor platform activity and your personal usage insights.</p>
+        </div>
+
+        <!-- Platform Stats -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+            <!-- Total Users -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-5 animate-slide-up">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="w-10 h-10 rounded-xl bg-brand-100 dark:bg-brand-950/50 flex items-center justify-center">
+                        <i data-lucide="users" class="w-5 h-5 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-2 py-0.5 rounded-pill">Platform</span>
+                </div>
+                <p class="text-2xl font-bold text-surface-900 dark:text-white">{{ total_users }}</p>
+                <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">Total Users</p>
+            </div>
+
+            <!-- Total Conversations -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-5 animate-slide-up" style="animation-delay:0.05s">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="w-10 h-10 rounded-xl bg-violet-100 dark:bg-violet-950/50 flex items-center justify-center">
+                        <i data-lucide="message-square" class="w-5 h-5 text-violet-600 dark:text-violet-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-2 py-0.5 rounded-pill">Platform</span>
+                </div>
+                <p class="text-2xl font-bold text-surface-900 dark:text-white">{{ total_conversations }}</p>
+                <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">Total Conversations</p>
+            </div>
+
+            <!-- Total Messages -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-5 animate-slide-up" style="animation-delay:0.1s">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="w-10 h-10 rounded-xl bg-fuchsia-100 dark:bg-fuchsia-950/50 flex items-center justify-center">
+                        <i data-lucide="mail" class="w-5 h-5 text-fuchsia-600 dark:text-fuchsia-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-2 py-0.5 rounded-pill">Platform</span>
+                </div>
+                <p class="text-2xl font-bold text-surface-900 dark:text-white">{{ total_messages }}</p>
+                <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">Total Messages</p>
+            </div>
+
+            <!-- Total Uploads -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-5 animate-slide-up" style="animation-delay:0.15s">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="w-10 h-10 rounded-xl bg-purple-100 dark:bg-purple-950/50 flex items-center justify-center">
+                        <i data-lucide="upload-cloud" class="w-5 h-5 text-purple-600 dark:text-purple-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 px-2 py-0.5 rounded-pill">Platform</span>
+                </div>
+                <p class="text-2xl font-bold text-surface-900 dark:text-white">{{ total_uploads }}</p>
+                <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">Total Uploads</p>
+            </div>
+        </div>
+
+        <!-- User Stats -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mb-8">
+            <!-- My Conversations -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-5 animate-slide-up" style="animation-delay:0.2s">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center">
+                        <i data-lucide="message-circle" class="w-5 h-5 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 px-2 py-0.5 rounded-pill">You</span>
+                </div>
+                <p class="text-2xl font-bold text-surface-900 dark:text-white">{{ my_conversations }}</p>
+                <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">My Conversations</p>
+            </div>
+
+            <!-- My Messages -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-5 animate-slide-up" style="animation-delay:0.25s">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center">
+                        <i data-lucide="send" class="w-5 h-5 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 px-2 py-0.5 rounded-pill">You</span>
+                </div>
+                <p class="text-2xl font-bold text-surface-900 dark:text-white">{{ my_messages }}</p>
+                <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">My Messages</p>
+            </div>
+
+            <!-- My Uploads -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-5 animate-slide-up" style="animation-delay:0.3s">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center">
+                        <i data-lucide="file-up" class="w-5 h-5 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 px-2 py-0.5 rounded-pill">You</span>
+                </div>
+                <p class="text-2xl font-bold text-surface-900 dark:text-white">{{ my_uploads }}</p>
+                <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">My Uploads</p>
+            </div>
+
+            <!-- Avg Response Time -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-5 animate-slide-up" style="animation-delay:0.35s">
+                <div class="flex items-center justify-between mb-3">
+                    <div class="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center">
+                        <i data-lucide="clock" class="w-5 h-5 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                    <span class="text-xs font-medium text-brand-600 dark:text-brand-400 bg-brand-50 dark:bg-brand-950/30 px-2 py-0.5 rounded-pill">You</span>
+                </div>
+                <p class="text-2xl font-bold text-surface-900 dark:text-white">{{ avg_response_time }}<span class="text-sm font-normal text-surface-400 ml-1">sec</span></p>
+                <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">Avg Response Time</p>
+            </div>
+        </div>
+
+        <!-- Charts Grid 2x2 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-8">
+            <!-- Daily Activity Chart -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-6 animate-slide-up" style="animation-delay:0.4s">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h3 class="text-sm font-semibold text-surface-900 dark:text-white">Daily Activity</h3>
+                        <p class="text-xs text-surface-400 mt-0.5">Messages & conversations per day</p>
+                    </div>
+                    <div class="w-8 h-8 rounded-lg bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center">
+                        <i data-lucide="activity" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                </div>
+                <div class="relative h-64">
+                    <canvas id="dailyActivityChart"></canvas>
+                </div>
+            </div>
+
+            <!-- User Growth Chart -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-6 animate-slide-up" style="animation-delay:0.45s">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h3 class="text-sm font-semibold text-surface-900 dark:text-white">User Growth</h3>
+                        <p class="text-xs text-surface-400 mt-0.5">Cumulative registered users</p>
+                    </div>
+                    <div class="w-8 h-8 rounded-lg bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center">
+                        <i data-lucide="trending-up" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                </div>
+                <div class="relative h-64">
+                    <canvas id="userGrowthChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Upload Stats Chart -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-6 animate-slide-up" style="animation-delay:0.5s">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h3 class="text-sm font-semibold text-surface-900 dark:text-white">Upload Statistics</h3>
+                        <p class="text-xs text-surface-400 mt-0.5">Files uploaded over time</p>
+                    </div>
+                    <div class="w-8 h-8 rounded-lg bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center">
+                        <i data-lucide="hard-drive" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                </div>
+                <div class="relative h-64">
+                    <canvas id="uploadStatsChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Active Users Chart -->
+            <div class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card shadow-card p-6 animate-slide-up" style="animation-delay:0.55s">
+                <div class="flex items-center justify-between mb-4">
+                    <div>
+                        <h3 class="text-sm font-semibold text-surface-900 dark:text-white">Active Users</h3>
+                        <p class="text-xs text-surface-400 mt-0.5">Daily active users trend</p>
+                    </div>
+                    <div class="w-8 h-8 rounded-lg bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center">
+                        <i data-lucide="users" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>
+                    </div>
+                </div>
+                <div class="relative h-64">
+                    <canvas id="activeUsersChart"></canvas>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    const isDark = document.documentElement.classList.contains('dark');
+    const gridColor = isDark ? 'rgba(63,63,70,0.5)' : 'rgba(228,228,231,0.8)';
+    const labelColor = isDark ? '#a1a1aa' : '#71717a';
+
+    const baseOptions = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: {
+                display: true,
+                labels: { color: labelColor, usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11, family: 'Inter' } }
+            }
+        },
+        scales: {
+            x: { grid: { display: false }, ticks: { color: labelColor, font: { size: 10, family: 'Inter' } } },
+            y: { grid: { color: gridColor }, ticks: { color: labelColor, font: { size: 10, family: 'Inter' } }, border: { display: false } }
+        }
+    };
+
+    /* Purple palette for charts */
+    const purple600 = '#9333ea';
+    const purple400 = '#c084fc';
+    const purple200 = '#e9d5ff';
+    const violet500 = '#8b5cf6';
+    const fuchsia500 = '#d946ef';
+
+    try {
+        const res = await fetch('/dashboard/chart-data');
+        const data = await res.json();
+
+        /* Daily Activity — Bar Chart */
+        new Chart(document.getElementById('dailyActivityChart'), {
+            type: 'bar',
+            data: {
+                labels: data.daily_activity?.labels || [],
+                datasets: [
+                    {
+                        label: 'Messages',
+                        data: data.daily_activity?.messages || [],
+                        backgroundColor: purple600,
+                        borderRadius: 6,
+                        barPercentage: 0.6,
+                        categoryPercentage: 0.7
+                    },
+                    {
+                        label: 'Conversations',
+                        data: data.daily_activity?.conversations || [],
+                        backgroundColor: purple200,
+                        borderRadius: 6,
+                        barPercentage: 0.6,
+                        categoryPercentage: 0.7
+                    }
+                ]
+            },
+            options: baseOptions
+        });
+
+        /* User Growth — Line Chart */
+        new Chart(document.getElementById('userGrowthChart'), {
+            type: 'line',
+            data: {
+                labels: data.user_growth?.labels || [],
+                datasets: [{
+                    label: 'Total Users',
+                    data: data.user_growth?.counts || [],
+                    borderColor: purple600,
+                    backgroundColor: isDark ? 'rgba(147,51,234,0.15)' : 'rgba(147,51,234,0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 3,
+                    pointBackgroundColor: purple600,
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2
+                }]
+            },
+            options: baseOptions
+        });
+
+        /* Upload Stats — Doughnut Chart */
+        new Chart(document.getElementById('uploadStatsChart'), {
+            type: 'doughnut',
+            data: {
+                labels: data.upload_stats?.labels || ['PDF', 'TXT', 'CSV', 'Other'],
+                datasets: [{
+                    data: data.upload_stats?.counts || [0, 0, 0, 0],
+                    backgroundColor: [purple600, violet500, fuchsia500, purple200],
+                    borderWidth: 0,
+                    hoverOffset: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '65%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { color: labelColor, usePointStyle: true, pointStyle: 'circle', padding: 16, font: { size: 11, family: 'Inter' } }
+                    }
+                }
+            }
+        });
+
+        /* Active Users — Line Chart */
+        new Chart(document.getElementById('activeUsersChart'), {
+            type: 'line',
+            data: {
+                labels: data.active_users?.labels || [],
+                datasets: [{
+                    label: 'Active Users',
+                    data: data.active_users?.counts || [],
+                    borderColor: violet500,
+                    backgroundColor: isDark ? 'rgba(139,92,246,0.15)' : 'rgba(139,92,246,0.1)',
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 3,
+                    pointBackgroundColor: violet500,
+                    pointBorderColor: '#fff',
+                    pointBorderWidth: 2
+                }]
+            },
+            options: baseOptions
+        });
+
+    } catch (err) {
+        console.error('Failed to load chart data:', err);
+    }
+});
+</script>
+{% endblock %}

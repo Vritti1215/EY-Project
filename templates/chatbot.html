@@ -1,0 +1,369 @@
+{% extends "base.html" %}
+{% block title %}Chat — AI Assistant Portal{% endblock %}
+{% block extra_head %}
+<style>
+    .chat-bubble { animation: msgIn 0.3s ease-out; }
+    @keyframes msgIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    .conv-item { transition: all 0.15s ease; }
+    .conv-item:hover { background: #f4f4f5; }
+    .dark .conv-item:hover { background: #27272a; }
+    .conv-item.active { background: #FFFEF0; border-left: 3px solid #E6CF00; }
+    .dark .conv-item.active { background: #2E2A0020; border-left: 3px solid #FFE600; }
+    #message-input { field-sizing: content; min-height: 48px; max-height: 140px; }
+</style>
+{% endblock %}
+{% block body %}
+<div class="flex h-screen overflow-hidden bg-surface-50 dark:bg-surface-950">
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="w-72 flex-shrink-0 bg-white dark:bg-surface-900 border-r border-surface-200 dark:border-surface-800 flex flex-col z-30
+                               max-lg:fixed max-lg:inset-y-0 max-lg:left-0 max-lg:-translate-x-full transition-transform duration-300">
+        <!-- New Chat Button -->
+        <div class="p-4">
+            <button onclick="createNewChat()" id="new-chat-btn"
+                class="w-full bg-brand-600 hover:bg-brand-700 py-2.5 text-sm font-semibold text-[#2E2E38] rounded-btn shadow-btn hover:shadow-btn-hover transition-all flex items-center justify-center gap-2">
+                <i data-lucide="plus" class="w-4 h-4 text-[#2E2E38]"></i> New Chat
+            </button>
+        </div>
+
+        <!-- Search -->
+        <div class="px-4 pb-3">
+            <div class="relative">
+                <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-surface-400"></i>
+                <input type="text" placeholder="Search..." id="conv-search"
+                    class="w-full pl-9 pr-3 py-2 bg-surface-50 dark:bg-surface-800 border border-surface-200 dark:border-surface-700 rounded-btn text-xs text-surface-700 dark:text-surface-300 placeholder-surface-400 focus:outline-none focus:border-brand-500 transition-colors"
+                    oninput="filterConversations(this.value)">
+            </div>
+        </div>
+
+        <!-- Nav -->
+        <div class="px-3 pb-2 space-y-0.5">
+            <a href="/dashboard" class="flex items-center gap-3 px-3 py-2 rounded-btn text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors text-sm">
+                <i data-lucide="compass" class="w-4 h-4"></i><span>Explore</span>
+            </a>
+            <a href="/uploads" class="flex items-center gap-3 px-3 py-2 rounded-btn text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors text-sm">
+                <i data-lucide="file-text" class="w-4 h-4"></i><span>Files</span>
+            </a>
+            <a href="/dashboard" class="flex items-center gap-3 px-3 py-2 rounded-btn text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors text-sm">
+                <i data-lucide="clock" class="w-4 h-4"></i><span>History</span>
+            </a>
+        </div>
+
+        <div class="px-4 py-1"><div class="h-px bg-surface-100 dark:bg-surface-800"></div></div>
+
+        <!-- Conversation List -->
+        <div class="flex-1 overflow-y-auto px-2 py-1 space-y-0.5" id="conversation-list">
+            {% if conversations %}
+            <p class="text-[10px] font-semibold text-surface-400 uppercase tracking-wider px-3 py-2">Recent</p>
+            {% for conv in conversations %}
+            <div class="conv-item rounded-btn px-3 py-2 cursor-pointer flex items-center gap-2.5 group"
+                 data-id="{{ conv.id }}" data-title="{{ conv.title }}" onclick="loadConversation({{ conv.id }})">
+                <i data-lucide="message-square" class="w-3.5 h-3.5 text-surface-400 flex-shrink-0"></i>
+                <span class="text-[13px] text-surface-600 dark:text-surface-400 truncate flex-1">{{ conv.title }}</span>
+                <button onclick="event.stopPropagation(); deleteConversation({{ conv.id }})"
+                    class="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-all flex-shrink-0">
+                    <i data-lucide="trash-2" class="w-3 h-3 text-surface-400 hover:text-red-500"></i>
+                </button>
+            </div>
+            {% endfor %}
+            {% else %}
+            <div class="text-center py-10">
+                <div class="w-10 h-10 rounded-full bg-surface-100 dark:bg-surface-800 flex items-center justify-center mx-auto mb-2">
+                    <i data-lucide="message-square-plus" class="w-5 h-5 text-surface-400"></i>
+                </div>
+                <p class="text-xs text-surface-400">No conversations yet</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Sidebar Footer -->
+        <div class="p-3 border-t border-surface-100 dark:border-surface-800">
+            <div class="flex items-center gap-3 px-2 mb-2">
+                <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-xs font-bold text-[#2E2E38]">
+                    {{ current_user.username[0] | upper }}
+                </div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-xs font-medium text-surface-800 dark:text-surface-200 truncate">{{ current_user.username }}</p>
+                    <p class="text-[10px] text-surface-400 truncate">{{ current_user.email }}</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-1">
+                <button onclick="ThemeManager.toggle()" class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-btn text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+                    <i data-lucide="sun" class="w-3.5 h-3.5 dark:hidden"></i><i data-lucide="moon" class="w-3.5 h-3.5 hidden dark:block"></i>
+                    <span class="text-[10px]">Theme</span>
+                </button>
+                <a href="/profile" class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-btn text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+                    <i data-lucide="settings" class="w-3.5 h-3.5"></i><span class="text-[10px]">Settings</span>
+                </a>
+                <a href="/logout" class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-btn text-surface-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors">
+                    <i data-lucide="log-out" class="w-3.5 h-3.5"></i><span class="text-[10px]">Logout</span>
+                </a>
+            </div>
+        </div>
+    </aside>
+
+    <!-- Mobile Overlay -->
+    <div id="sidebar-overlay" class="fixed inset-0 bg-black/30 z-20 hidden lg:hidden" onclick="toggleSidebar()"></div>
+
+    <!-- Main Chat Area -->
+    <main class="flex-1 flex flex-col min-w-0 bg-white dark:bg-surface-950">
+        <!-- Header -->
+        <header class="border-b border-surface-100 dark:border-surface-800 px-4 py-3 flex items-center gap-3 flex-shrink-0">
+            <button onclick="toggleSidebar()" class="lg:hidden p-2 rounded-btn text-surface-500 hover:bg-surface-100 dark:hover:bg-surface-800">
+                <i data-lucide="menu" class="w-5 h-5"></i>
+            </button>
+            <div class="flex items-center gap-2.5 flex-1">
+                <div class="w-7 h-7 rounded-lg bg-brand-100 dark:bg-brand-950 flex items-center justify-center">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-brand-600 dark:text-brand-400"></i>
+                </div>
+                <h2 class="text-sm font-semibold text-surface-900 dark:text-white truncate" id="chat-title">New Conversation</h2>
+            </div>
+            <div class="flex items-center gap-1">
+                <div class="relative" id="export-dropdown-container">
+                    <button onclick="toggleExportMenu()" class="p-2 rounded-btn text-surface-400 hover:text-surface-700 dark:hover:text-white hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors" title="Export chat">
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                    </button>
+                    <div id="export-dropdown" class="hidden absolute right-0 top-full mt-1 bg-white dark:bg-surface-850 border border-surface-200 dark:border-surface-700 rounded-btn shadow-elevated py-1 min-w-[160px] z-50">
+                        <button onclick="exportChat('pdf')" class="w-full px-4 py-2 text-left text-sm text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 flex items-center gap-2"><i data-lucide="file-text" class="w-4 h-4 text-red-500"></i>PDF</button>
+                        <button onclick="exportChat('docx')" class="w-full px-4 py-2 text-left text-sm text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 flex items-center gap-2"><i data-lucide="file-text" class="w-4 h-4 text-blue-500"></i>DOCX</button>
+                        <button onclick="exportChat('txt')" class="w-full px-4 py-2 text-left text-sm text-surface-700 dark:text-surface-300 hover:bg-surface-50 dark:hover:bg-surface-800 flex items-center gap-2"><i data-lucide="file-text" class="w-4 h-4 text-emerald-500"></i>TXT</button>
+                    </div>
+                </div>
+                <button onclick="clearCurrentChat()" class="p-2 rounded-btn text-surface-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors" title="Clear">
+                    <i data-lucide="eraser" class="w-4 h-4"></i>
+                </button>
+            </div>
+        </header>
+
+        <!-- Messages -->
+        <div class="flex-1 overflow-y-auto px-4 py-6" id="chat-messages">
+            <div id="welcome-screen" class="flex flex-col items-center justify-center h-full text-center px-4">
+                <!-- Purple orb/glow -->
+                <div class="relative mb-6">
+                    <div class="w-20 h-20 rounded-full bg-gradient-to-br from-brand-200 to-brand-400 dark:from-brand-800 dark:to-brand-600 opacity-60 blur-xl absolute inset-0"></div>
+                    <div class="w-16 h-16 rounded-full bg-gradient-to-br from-brand-400 to-brand-600 flex items-center justify-center relative shadow-btn">
+                        <i data-lucide="sparkles" class="w-7 h-7 text-[#2E2E38]"></i>
+                    </div>
+                </div>
+                <p class="text-brand-500 dark:text-brand-400 text-sm font-medium mb-1">Hello, {{ current_user.username }}</p>
+                <h2 class="text-2xl font-bold text-surface-900 dark:text-white mb-2">How can I assist you today?</h2>
+                <p class="text-surface-400 mb-10 max-w-md text-sm">Ask me anything — from analysis and writing to coding and research.</p>
+
+                <!-- Saved Prompts Row -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl w-full">
+                    <button onclick="sendSuggestion('Synthesize and summarize key data insights from our latest report')"
+                        class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card p-4 text-left shadow-card hover:shadow-card-hover hover:border-brand-300 dark:hover:border-brand-700 transition-all group">
+                        <div class="w-8 h-8 rounded-lg bg-brand-50 dark:bg-brand-950/30 flex items-center justify-center mb-3">
+                            <i data-lucide="refresh-cw" class="w-4 h-4 text-brand-600 dark:text-brand-400"></i>
+                        </div>
+                        <p class="text-xs font-semibold text-surface-800 dark:text-surface-200 mb-0.5">Synthesize Data</p>
+                        <p class="text-[10px] text-surface-400 leading-relaxed">Turning meeting notes into 5 key bullet points for the team</p>
+                    </button>
+                    <button onclick="sendSuggestion('Help me brainstorm creative ideas for a new sustainable fashion brand')"
+                        class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card p-4 text-left shadow-card hover:shadow-card-hover hover:border-brand-300 dark:hover:border-brand-700 transition-all group">
+                        <div class="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-950/30 flex items-center justify-center mb-3">
+                            <i data-lucide="wand-2" class="w-4 h-4 text-blue-600 dark:text-blue-400"></i>
+                        </div>
+                        <p class="text-xs font-semibold text-surface-800 dark:text-surface-200 mb-0.5">Creative Brainstorm</p>
+                        <p class="text-[10px] text-surface-400 leading-relaxed">Generate 3 taglines for a new sustainable fashion brand</p>
+                    </button>
+                    <button onclick="sendSuggestion('Compare the key differences between GPT-4 and Llama 3 models')"
+                        class="bg-white dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-card p-4 text-left shadow-card hover:shadow-card-hover hover:border-brand-300 dark:hover:border-brand-700 transition-all group">
+                        <div class="w-8 h-8 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 flex items-center justify-center mb-3">
+                            <i data-lucide="link" class="w-4 h-4 text-emerald-600 dark:text-emerald-400"></i>
+                        </div>
+                        <p class="text-xs font-semibold text-surface-800 dark:text-surface-200 mb-0.5">Check Facts</p>
+                        <p class="text-[10px] text-surface-400 leading-relaxed">Compare key differences between ChatGPT and Llama</p>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Area -->
+        <div class="px-4 py-4 flex-shrink-0">
+            <div class="max-w-3xl mx-auto">
+                <!-- File Preview Chip -->
+                <div id="file-preview" class="hidden mb-2 flex items-center gap-2 bg-brand-50 dark:bg-brand-950/30 border border-brand-200 dark:border-brand-800 rounded-btn px-3 py-2">
+                    <i data-lucide="file-spreadsheet" class="w-4 h-4 text-brand-600 dark:text-brand-400 flex-shrink-0" id="file-preview-icon"></i>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-xs font-medium text-surface-800 dark:text-surface-200 truncate" id="file-preview-name"></p>
+                        <p class="text-[10px] text-surface-400" id="file-preview-size"></p>
+                    </div>
+                    <button onclick="removeAttachedFile()" class="p-1 rounded-lg hover:bg-red-100 dark:hover:bg-red-950/30 transition-colors" title="Remove file">
+                        <i data-lucide="x" class="w-3.5 h-3.5 text-surface-400 hover:text-red-500"></i>
+                    </button>
+                </div>
+                <form id="chat-form" class="relative">
+                    <div class="bg-surface-50 dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-2xl p-1.5 shadow-card focus-within:border-brand-400 focus-within:shadow-btn transition-all">
+                        <textarea id="message-input" rows="1"
+                            class="w-full px-4 py-3 bg-transparent text-sm text-surface-900 dark:text-white placeholder-surface-400 focus:outline-none resize-none"
+                            placeholder="Ask me anything..." maxlength="4000"></textarea>
+                        <div class="flex items-center justify-between px-2 pb-1">
+                            <div class="flex items-center gap-1">
+                                <input type="file" id="file-input" class="hidden"
+                                       accept=".pdf,.docx,.txt,.csv,.xlsx,.xls"
+                                       onchange="handleFileSelect(this)">
+                                <button type="button" onclick="document.getElementById('file-input').click()"
+                                    class="p-2 rounded-btn text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors" title="Attach file (PDF, DOCX, CSV, Excel)">
+                                    <i data-lucide="paperclip" class="w-4 h-4"></i>
+                                </button>
+                                <span id="char-count" class="text-[10px] text-surface-400 hidden">0/4000</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button type="submit" id="send-btn"
+                                    class="bg-brand-600 hover:bg-brand-700 p-2.5 rounded-btn shadow-btn hover:shadow-btn-hover transition-all disabled:opacity-30 disabled:cursor-not-allowed disabled:shadow-none" disabled>
+                                    <i data-lucide="send" class="w-4 h-4 text-[#2E2E38]"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </form>
+                <p class="text-center text-[10px] text-surface-400 mt-2">AI responses may be inaccurate. Verify important information.</p>
+            </div>
+        </div>
+    </main>
+</div>
+{% endblock %}
+{% block extra_scripts %}
+<script>
+const CSRF_TOKEN = '{{ csrf_token() }}';
+let currentConversationId = null, isLoading = false;
+let attachedFile = null;
+const chatMessages = document.getElementById('chat-messages'), welcomeScreen = document.getElementById('welcome-screen');
+const messageInput = document.getElementById('message-input'), sendBtn = document.getElementById('send-btn');
+const chatForm = document.getElementById('chat-form'), chatTitle = document.getElementById('chat-title'), charCount = document.getElementById('char-count');
+
+// ── File attachment helpers ──
+function getFileIcon(ext) {
+    const icons = { pdf: 'file-text', docx: 'file-text', txt: 'file-type', csv: 'file-spreadsheet', xlsx: 'file-spreadsheet', xls: 'file-spreadsheet' };
+    return icons[ext] || 'file';
+}
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+function handleFileSelect(input) {
+    const file = input.files[0];
+    if (!file) return;
+    if (file.size > 16 * 1024 * 1024) { alert('File size must be under 16 MB'); input.value = ''; return; }
+    attachedFile = file;
+    const ext = file.name.split('.').pop().toLowerCase();
+    document.getElementById('file-preview').classList.remove('hidden');
+    document.getElementById('file-preview-name').textContent = file.name;
+    document.getElementById('file-preview-size').textContent = formatFileSize(file.size) + ' · ' + ext.toUpperCase();
+    sendBtn.disabled = false;
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+function removeAttachedFile() {
+    attachedFile = null;
+    document.getElementById('file-input').value = '';
+    document.getElementById('file-preview').classList.add('hidden');
+    sendBtn.disabled = !messageInput.value.trim() || isLoading;
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+
+messageInput.addEventListener('input', function() {
+    this.style.height = 'auto'; this.style.height = Math.min(this.scrollHeight, 140) + 'px';
+    const len = this.value.length;
+    if (len > 100) { charCount.classList.remove('hidden'); charCount.textContent = `${len}/4000`; } else { charCount.classList.add('hidden'); }
+    sendBtn.disabled = (!this.value.trim() && !attachedFile) || isLoading;
+});
+messageInput.addEventListener('keydown', function(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!sendBtn.disabled) chatForm.dispatchEvent(new Event('submit')); } });
+
+chatForm.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    const message = messageInput.value.trim();
+    if ((!message && !attachedFile) || isLoading) return;
+    welcomeScreen.style.display = 'none';
+
+    // Display message with file indicator
+    let displayMsg = message || 'Analyze the attached file';
+    if (attachedFile) displayMsg += ` 📎 ${attachedFile.name}`;
+    appendMessage('user', displayMsg);
+
+    messageInput.value = ''; messageInput.style.height = 'auto'; sendBtn.disabled = true; charCount.classList.add('hidden');
+    showTypingIndicator(); isLoading = true;
+
+    try {
+        // Always use FormData to support both text-only and file+text
+        const formData = new FormData();
+        formData.append('message', message);
+        if (currentConversationId) formData.append('conversation_id', currentConversationId);
+        if (attachedFile) formData.append('files', attachedFile);
+
+        const r = await fetch('/chat/send', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF_TOKEN },
+            body: formData
+        });
+        const d = await r.json(); removeTypingIndicator();
+        if (d.success) {
+            appendMessage('ai', d.response, d.timestamp, d.response_time);
+            currentConversationId = d.conversation_id;
+            chatTitle.textContent = d.conversation_title;
+            updateConversationList(d.conversation_id, d.conversation_title);
+        } else {
+            appendMessage('ai', 'Error: ' + (d.error || 'Unknown'));
+        }
+    } catch (err) { removeTypingIndicator(); appendMessage('ai', 'Network error. Please check your connection.'); }
+    finally {
+        isLoading = false;
+        removeAttachedFile();
+        sendBtn.disabled = !messageInput.value.trim();
+    }
+});
+
+function appendMessage(role, content, timestamp, responseTime) {
+    const now = timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const div = document.createElement('div'); div.className = 'chat-bubble mb-4 max-w-3xl mx-auto';
+    if (role === 'user') {
+        div.innerHTML = `<div class="flex justify-end"><div class="max-w-[75%]"><div class="bg-brand-600 rounded-bubble rounded-tr-md px-4 py-3"><p class="text-sm text-[#2E2E38] whitespace-pre-wrap">${escapeHtml(content)}</p></div><p class="text-[10px] text-surface-400 mt-1 text-right">${now}</p></div></div>`;
+    } else {
+        let html; try { html = marked.parse(content); } catch { html = escapeHtml(content).replace(/\n/g, '<br>'); }
+        div.innerHTML = `<div class="flex gap-3"><div class="w-7 h-7 rounded-lg bg-brand-100 dark:bg-brand-950 flex items-center justify-center flex-shrink-0 mt-0.5"><i data-lucide="sparkles" class="w-3.5 h-3.5 text-brand-600 dark:text-brand-400"></i></div><div class="max-w-[80%] min-w-0"><div class="prose-ai text-sm text-surface-700 dark:text-surface-300">${html}</div><div class="flex items-center gap-3 mt-1.5"><p class="text-[10px] text-surface-400">${now}</p>${responseTime ? `<p class="text-[10px] text-surface-400">⚡ ${responseTime}s</p>` : ''}<button onclick="copyMessage(this)" class="text-[10px] text-surface-400 hover:text-brand-600 transition-colors flex items-center gap-1"><i data-lucide="copy" class="w-3 h-3"></i></button></div></div></div>`;
+    }
+    chatMessages.appendChild(div); chatMessages.scrollTop = chatMessages.scrollHeight;
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+function showTypingIndicator() {
+    const div = document.createElement('div'); div.id = 'typing-indicator'; div.className = 'chat-bubble mb-4 max-w-3xl mx-auto';
+    div.innerHTML = `<div class="flex gap-3"><div class="w-7 h-7 rounded-lg bg-brand-100 dark:bg-brand-950 flex items-center justify-center flex-shrink-0"><i data-lucide="sparkles" class="w-3.5 h-3.5 text-brand-600 dark:text-brand-400"></i></div><div class="px-4 py-3"><div class="typing-dots"><span></span><span></span><span></span></div></div></div>`;
+    chatMessages.appendChild(div); chatMessages.scrollTop = chatMessages.scrollHeight; if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+function removeTypingIndicator() { document.getElementById('typing-indicator')?.remove(); }
+function copyMessage(btn) { const text = btn.closest('.flex.gap-3').querySelector('.prose-ai')?.textContent; if (text) { navigator.clipboard.writeText(text); btn.innerHTML = '<i data-lucide="check" class="w-3 h-3"></i>'; if (typeof lucide !== 'undefined') lucide.createIcons(); setTimeout(() => { btn.innerHTML = '<i data-lucide="copy" class="w-3 h-3"></i>'; if (typeof lucide !== 'undefined') lucide.createIcons(); }, 2000); } }
+
+async function createNewChat() { currentConversationId = null; chatTitle.textContent = 'New Conversation'; chatMessages.innerHTML = ''; chatMessages.appendChild(welcomeScreen); welcomeScreen.style.display = 'flex'; messageInput.focus(); }
+async function loadConversation(id) {
+    try { const r = await fetch(`/chat/history/${id}`); const d = await r.json();
+    if (d.success) { currentConversationId = id; chatTitle.textContent = d.title; welcomeScreen.style.display = 'none';
+    chatMessages.querySelectorAll('.chat-bubble').forEach(b => b.remove());
+    d.messages.forEach(m => { appendMessage('user', m.prompt, m.timestamp); appendMessage('ai', m.response, m.timestamp, m.response_time); });
+    document.querySelectorAll('.conv-item').forEach(el => el.classList.toggle('active', parseInt(el.dataset.id) === id));
+    if (window.innerWidth < 1024) toggleSidebar(); }} catch(e) { console.error(e); }
+}
+async function deleteConversation(id) { if (!confirm('Delete this conversation?')) return;
+    try { await fetch(`/chat/delete/${id}`, { method: 'DELETE', headers: { 'X-CSRFToken': CSRF_TOKEN } }); document.querySelector(`.conv-item[data-id="${id}"]`)?.remove(); if (currentConversationId === id) createNewChat(); } catch(e) { console.error(e); } }
+async function clearCurrentChat() { if (!currentConversationId || !confirm('Clear all messages?')) return;
+    try { await fetch(`/chat/clear/${currentConversationId}`, { method: 'POST', headers: { 'X-CSRFToken': CSRF_TOKEN } }); chatMessages.querySelectorAll('.chat-bubble').forEach(b => b.remove()); chatMessages.appendChild(welcomeScreen); welcomeScreen.style.display = 'flex'; } catch(e) { console.error(e); } }
+function updateConversationList(id, title) {
+    let item = document.querySelector(`.conv-item[data-id="${id}"]`);
+    if (!item) { const list = document.getElementById('conversation-list'); const empty = list.querySelector('.text-center'); if (empty) empty.remove();
+    if (!list.querySelector('.text-\\[10px\\]')) { const lbl = document.createElement('p'); lbl.className = 'text-[10px] font-semibold text-surface-400 uppercase tracking-wider px-3 py-2'; lbl.textContent = 'Recent'; list.prepend(lbl); }
+    item = document.createElement('div'); item.className = 'conv-item rounded-btn px-3 py-2 cursor-pointer flex items-center gap-2.5 group active'; item.dataset.id = id; item.dataset.title = title; item.onclick = () => loadConversation(id);
+    item.innerHTML = `<i data-lucide="message-square" class="w-3.5 h-3.5 text-surface-400 flex-shrink-0"></i><span class="text-[13px] text-surface-600 dark:text-surface-400 truncate flex-1">${escapeHtml(title)}</span><button onclick="event.stopPropagation(); deleteConversation(${id})" class="opacity-0 group-hover:opacity-100 p-1 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-all flex-shrink-0"><i data-lucide="trash-2" class="w-3 h-3 text-surface-400 hover:text-red-500"></i></button>`;
+    const lbl = list.querySelector('.text-\\[10px\\]'); if (lbl) lbl.after(item); else list.prepend(item);
+    if (typeof lucide !== 'undefined') lucide.createIcons(); }
+    document.querySelectorAll('.conv-item').forEach(el => el.classList.toggle('active', parseInt(el.dataset.id) === id));
+}
+function filterConversations(q) { q = q.toLowerCase(); document.querySelectorAll('.conv-item').forEach(el => { el.style.display = el.dataset.title?.toLowerCase().includes(q) ? '' : 'none'; }); }
+function toggleExportMenu() { document.getElementById('export-dropdown').classList.toggle('hidden'); }
+function exportChat(fmt) { if (!currentConversationId) { alert('No conversation to export'); return; } window.open(`/chat/export/${currentConversationId}/${fmt}`, '_blank'); document.getElementById('export-dropdown').classList.add('hidden'); }
+document.addEventListener('click', e => { const c = document.getElementById('export-dropdown-container'); if (c && !c.contains(e.target)) document.getElementById('export-dropdown').classList.add('hidden'); });
+function toggleSidebar() { document.getElementById('sidebar').classList.toggle('max-lg:-translate-x-full'); document.getElementById('sidebar-overlay').classList.toggle('hidden'); }
+function sendSuggestion(text) { messageInput.value = text; messageInput.dispatchEvent(new Event('input')); chatForm.dispatchEvent(new Event('submit')); }
+function escapeHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+messageInput.focus();
+</script>
+{% endblock %}

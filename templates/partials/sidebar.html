@@ -1,0 +1,35 @@
+<!-- Sidebar Navigation Partial (for Dashboard, Uploads, Profile pages) -->
+<aside class="w-64 flex-shrink-0 bg-white dark:bg-surface-900 border-r border-surface-200 dark:border-surface-800 flex flex-col max-lg:hidden">
+    <div class="p-5 border-b border-surface-100 dark:border-surface-800">
+        <a href="/" class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-btn bg-brand-600 flex items-center justify-center">
+                <i data-lucide="bot" class="w-4 h-4 text-[#2E2E38]"></i>
+            </div>
+            <span class="text-sm font-bold text-surface-900 dark:text-white">AI Assistant</span>
+        </a>
+    </div>
+    <nav class="flex-1 p-3 space-y-0.5">
+        <a href="/chat" class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors">
+            <i data-lucide="message-square" class="w-4 h-4"></i><span>Chat</span>
+        </a>
+        <a href="/dashboard" class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors">
+            <i data-lucide="bar-chart-3" class="w-4 h-4"></i><span>Dashboard</span>
+        </a>
+        <a href="/uploads" class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors">
+            <i data-lucide="file-up" class="w-4 h-4"></i><span>File Analysis</span>
+        </a>
+        <a href="/profile" class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors">
+            <i data-lucide="user" class="w-4 h-4"></i><span>Profile</span>
+        </a>
+    </nav>
+    <div class="p-3 border-t border-surface-100 dark:border-surface-800 space-y-0.5">
+        <button onclick="ThemeManager.toggle()" class="w-full flex items-center gap-3 px-3 py-2 rounded-btn text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors text-sm">
+            <i data-lucide="sun" class="w-4 h-4 dark:hidden"></i>
+            <i data-lucide="moon" class="w-4 h-4 hidden dark:block"></i>
+            <span>Toggle Theme</span>
+        </button>
+        <a href="/logout" class="flex items-center gap-3 px-3 py-2 rounded-btn text-surface-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors text-sm">
+            <i data-lucide="log-out" class="w-4 h-4"></i><span>Logout</span>
+        </a>
+    </div>
+</aside>

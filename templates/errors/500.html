@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}500 — Server Error{% endblock %}
+{% block body %}
+<div class="min-h-screen flex items-center justify-center px-4 bg-surface-50 dark:bg-surface-950">
+    <div class="text-center animate-slide-up">
+        <div class="w-16 h-16 rounded-2xl bg-red-50 dark:bg-red-950/30 flex items-center justify-center mx-auto mb-6">
+            <i data-lucide="alert-triangle" class="w-8 h-8 text-red-600 dark:text-red-400"></i>
+        </div>
+        <h1 class="text-6xl font-black text-red-600 dark:text-red-400 mb-3">500</h1>
+        <p class="text-lg text-surface-600 dark:text-surface-400 mb-8">Something went wrong on our end. Please try again.</p>
+        <a href="/" class="bg-brand-600 hover:bg-brand-700 px-6 py-3 text-sm font-semibold text-[#2E2E38] rounded-btn shadow-btn hover:shadow-btn-hover transition-all inline-flex items-center gap-2">
+            <i data-lucide="home" class="w-4 h-4"></i> Go Home
+        </a>
+    </div>
+</div>
+{% endblock %}

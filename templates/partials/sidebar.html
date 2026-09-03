@@ -1,35 +1,165 @@
-<!-- Sidebar Navigation Partial (for Dashboard, Uploads, Profile pages) -->
-<aside class="w-64 flex-shrink-0 bg-white dark:bg-surface-900 border-r border-surface-200 dark:border-surface-800 flex flex-col max-lg:hidden">
+<!-- Shared Sidebar -->
+<aside class="w-64 flex-shrink-0 hidden lg:flex flex-col
+              bg-white dark:bg-surface-900
+              border-r border-surface-200 dark:border-surface-800">
+
+    <!-- Brand -->
     <div class="p-5 border-b border-surface-100 dark:border-surface-800">
-        <a href="/" class="flex items-center gap-2.5">
-            <div class="w-8 h-8 rounded-btn bg-brand-600 flex items-center justify-center">
-                <i data-lucide="bot" class="w-4 h-4 text-[#2E2E38]"></i>
+        <a href="{{ url_for('main_home') }}"
+           class="flex items-center gap-2.5"
+           aria-label="Go to Home">
+
+            <div class="w-8 h-8 rounded-btn bg-brand-600
+                        flex items-center justify-center">
+                <i data-lucide="bot"
+                   class="w-4 h-4 text-[#2E2E38]"></i>
             </div>
-            <span class="text-sm font-bold text-surface-900 dark:text-white">AI Assistant</span>
+
+            <span class="text-sm font-bold text-surface-900 dark:text-white">
+                AI Assistant
+            </span>
         </a>
     </div>
+
+    <!-- Navigation -->
     <nav class="flex-1 p-3 space-y-0.5">
-        <a href="/chat" class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors">
-            <i data-lucide="message-square" class="w-4 h-4"></i><span>Chat</span>
+
+        <!-- Home -->
+        <a href="{{ url_for('main_home') }}"
+           class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm
+                  {% if request.endpoint == 'main_home' %}
+                      bg-brand-50 dark:bg-brand-950/30
+                      text-brand-700 dark:text-brand-300
+                  {% else %}
+                      text-surface-600 dark:text-surface-400
+                      hover:bg-surface-100 dark:hover:bg-surface-800
+                      hover:text-surface-900 dark:hover:text-white
+                  {% endif %}
+                  transition-colors">
+
+            <i data-lucide="home" class="w-4 h-4"></i>
+            <span>Home</span>
         </a>
-        <a href="/dashboard" class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors">
-            <i data-lucide="bar-chart-3" class="w-4 h-4"></i><span>Dashboard</span>
+
+        <!-- Chat -->
+        <a href="/chat"
+           class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm
+                  {% if request.path.startswith('/chat') %}
+                      bg-brand-50 dark:bg-brand-950/30
+                      text-brand-700 dark:text-brand-300
+                  {% else %}
+                      text-surface-600 dark:text-surface-400
+                      hover:bg-surface-100 dark:hover:bg-surface-800
+                      hover:text-surface-900 dark:hover:text-white
+                  {% endif %}
+                  transition-colors">
+
+            <i data-lucide="message-square" class="w-4 h-4"></i>
+            <span>Chat</span>
         </a>
-        <a href="/uploads" class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors">
-            <i data-lucide="file-up" class="w-4 h-4"></i><span>File Analysis</span>
+
+        <!-- Dashboard -->
+        <a href="/dashboard"
+           class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm
+                  {% if request.path.startswith('/dashboard') %}
+                      bg-brand-50 dark:bg-brand-950/30
+                      text-brand-700 dark:text-brand-300
+                  {% else %}
+                      text-surface-600 dark:text-surface-400
+                      hover:bg-surface-100 dark:hover:bg-surface-800
+                      hover:text-surface-900 dark:hover:text-white
+                  {% endif %}
+                  transition-colors">
+
+            <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
+            <span>Dashboard</span>
         </a>
-        <a href="/profile" class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm text-surface-600 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors">
-            <i data-lucide="user" class="w-4 h-4"></i><span>Profile</span>
+
+        <!-- File Analysis -->
+        <a href="/uploads"
+           class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm
+                  {% if request.path.startswith('/uploads') %}
+                      bg-brand-50 dark:bg-brand-950/30
+                      text-brand-700 dark:text-brand-300
+                  {% else %}
+                      text-surface-600 dark:text-surface-400
+                      hover:bg-surface-100 dark:hover:bg-surface-800
+                      hover:text-surface-900 dark:hover:text-white
+                  {% endif %}
+                  transition-colors">
+
+            <i data-lucide="file-up" class="w-4 h-4"></i>
+            <span>File Analysis</span>
         </a>
+
+        <!-- Profile -->
+        <a href="/profile"
+           class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm
+                  {% if request.path.startswith('/profile') %}
+                      bg-brand-50 dark:bg-brand-950/30
+                      text-brand-700 dark:text-brand-300
+                  {% else %}
+                      text-surface-600 dark:text-surface-400
+                      hover:bg-surface-100 dark:hover:bg-surface-800
+                      hover:text-surface-900 dark:hover:text-white
+                  {% endif %}
+                  transition-colors">
+
+            <i data-lucide="user" class="w-4 h-4"></i>
+            <span>Profile</span>
+        </a>
+
+        <!-- Settings -->
+        <a href="{{ url_for('auth.settings') }}"
+           class="flex items-center gap-3 px-3 py-2.5 rounded-btn text-sm
+                  {% if request.path.startswith('/settings') %}
+                      bg-brand-50 dark:bg-brand-950/30
+                      text-brand-700 dark:text-brand-300
+                  {% else %}
+                      text-surface-600 dark:text-surface-400
+                      hover:bg-surface-100 dark:hover:bg-surface-800
+                      hover:text-surface-900 dark:hover:text-white
+                  {% endif %}
+                  transition-colors">
+
+            <i data-lucide="settings" class="w-4 h-4"></i>
+            <span>Settings</span>
+        </a>
+
     </nav>
+
+    <!-- Bottom Actions -->
     <div class="p-3 border-t border-surface-100 dark:border-surface-800 space-y-0.5">
-        <button onclick="ThemeManager.toggle()" class="w-full flex items-center gap-3 px-3 py-2 rounded-btn text-surface-500 dark:text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 hover:text-surface-900 dark:hover:text-white transition-colors text-sm">
+
+        <!-- Theme -->
+        <button type="button"
+                onclick="ThemeManager.toggle()"
+                class="w-full flex items-center gap-3 px-3 py-2
+                       rounded-btn text-sm text-surface-500
+                       dark:text-surface-400
+                       hover:bg-surface-100 dark:hover:bg-surface-800
+                       hover:text-surface-900 dark:hover:text-white
+                       transition-colors"
+                aria-label="Toggle theme">
+
             <i data-lucide="sun" class="w-4 h-4 dark:hidden"></i>
             <i data-lucide="moon" class="w-4 h-4 hidden dark:block"></i>
+
             <span>Toggle Theme</span>
         </button>
-        <a href="/logout" class="flex items-center gap-3 px-3 py-2 rounded-btn text-surface-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors text-sm">
-            <i data-lucide="log-out" class="w-4 h-4"></i><span>Logout</span>
+
+        <!-- Logout -->
+        <a href="{{ url_for('auth.logout') }}"
+           class="flex items-center gap-3 px-3 py-2 rounded-btn
+                  text-sm text-surface-500
+                  hover:text-red-500 hover:bg-red-50
+                  dark:hover:bg-red-950/30
+                  transition-colors">
+
+            <i data-lucide="log-out" class="w-4 h-4"></i>
+            <span>Logout</span>
         </a>
+
     </div>
+
 </aside>

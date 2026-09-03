@@ -49,6 +49,9 @@ class ChatHistory(db.Model):
         response: The AI-generated response.
         timestamp: When the message exchange occurred.
         response_time: Time taken for the AI to respond (in seconds).
+        chart_image: Optional base64 PNG data URI of a generated chart,
+            so charts persist across page reloads / conversation history
+            fetches without needing separate file storage.
     """
     __tablename__ = 'chat_history'
 
@@ -59,6 +62,7 @@ class ChatHistory(db.Model):
     response = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     response_time = db.Column(db.Float, default=0.0)  # seconds
+    chart_image = db.Column(db.Text, nullable=True, default=None)
 
     def to_dict(self):
         """Serialize the message to a dictionary for JSON responses."""
@@ -67,7 +71,8 @@ class ChatHistory(db.Model):
             'prompt': self.prompt,
             'response': self.response,
             'timestamp': self.timestamp.strftime('%Y-%m-%d %H:%M:%S') if self.timestamp else None,
-            'response_time': round(self.response_time, 2) if self.response_time else 0
+            'response_time': round(self.response_time, 2) if self.response_time else 0,
+            'chart_image': self.chart_image
         }
 
     def __repr__(self):

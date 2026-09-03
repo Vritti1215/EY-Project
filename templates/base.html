@@ -233,6 +233,11 @@
                    class="p-1.5 rounded-lg hover:bg-black/10 transition-colors focus:outline-none focus:ring-2 focus:ring-black/20">
                     <i data-lucide="external-link" class="w-3.5 h-3.5 text-[#2E2E38]"></i>
                 </a>
+                <a href="{{ url_for('main_home') }}"
+                   class="p-2 rounded-btn hover:bg-black/10 transition-colors"
+                   title="Home" aria-label="Go to Home">
+                    <i data-lucide="home" class="w-3.5 h-3.5 text-[#2E2E38]"></i>
+                </a>
                 <button onclick="ChatWidget.toggleMaximize()" id="cw-btn-maximize" aria-label="Maximize chat window" title="Maximize"
                         class="p-1.5 rounded-lg hover:bg-black/10 transition-colors focus:outline-none focus:ring-2 focus:ring-black/20">
                     <i data-lucide="maximize-2" class="w-3.5 h-3.5 text-[#2E2E38]" id="cw-icon-maximize"></i>
@@ -367,7 +372,9 @@
                 this.convId = s.convId || null;
                 this.state = s.viewState || 'minimized';
                 this.messages = JSON.parse(localStorage.getItem('cw_messages') || '[]');
-                this.closed = s.closed === true;
+                // The floating assistant should remain available after sign-in.
+                // Do not let an old persisted 'closed' state hide it on a new page.
+                this.closed = false;
             } catch { /* ignore */ }
         },
         _saveState() {

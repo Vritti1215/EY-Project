@@ -1,0 +1,849 @@
+{% extends "base.html" %}
+
+{% block title %}Settings — AI Assistant Portal{% endblock %}
+
+{% block body %}
+
+<div class="flex h-screen overflow-hidden bg-surface-50 dark:bg-surface-950">
+
+    <!-- Sidebar -->
+    {% include 'partials/sidebar.html' %}
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto p-6 lg:p-8">
+
+        <div class="max-w-3xl mx-auto">
+
+            <!-- ================================================= -->
+            <!-- PAGE HEADER -->
+            <!-- ================================================= -->
+
+            <div class="mb-8">
+
+                <p class="text-xs font-semibold uppercase tracking-widest
+                          text-brand-600 dark:text-brand-400 mb-2">
+                    Preferences
+                </p>
+
+                <h1 class="text-3xl font-bold text-surface-900 dark:text-white">
+                    Settings
+                </h1>
+
+                <p class="text-sm text-surface-500 dark:text-surface-400 mt-2">
+                    Manage your account and workspace preferences.
+                </p>
+
+            </div>
+
+
+            <!-- ================================================= -->
+            <!-- FLASH MESSAGES -->
+            <!-- ================================================= -->
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+
+                {% if messages %}
+
+                    <div class="space-y-3 mb-6">
+
+                        {% for category, message in messages %}
+
+                            <div class="flex items-center gap-3 px-4 py-3 rounded-btn border
+                                {% if category == 'success' %}
+                                    bg-emerald-50 dark:bg-emerald-950/30
+                                    border-emerald-200 dark:border-emerald-800
+                                {% elif category == 'error' %}
+                                    bg-red-50 dark:bg-red-950/30
+                                    border-red-200 dark:border-red-800
+                                {% else %}
+                                    bg-brand-50 dark:bg-brand-950/30
+                                    border-brand-200 dark:border-brand-800
+                                {% endif %}">
+
+                                {% if category == 'success' %}
+                                    <i data-lucide="check-circle"
+                                       class="w-5 h-5 text-emerald-600 dark:text-emerald-400"></i>
+
+                                {% elif category == 'error' %}
+                                    <i data-lucide="circle-alert"
+                                       class="w-5 h-5 text-red-600 dark:text-red-400"></i>
+
+                                {% else %}
+                                    <i data-lucide="info"
+                                       class="w-5 h-5 text-brand-600 dark:text-brand-400"></i>
+                                {% endif %}
+
+                                <span class="text-sm text-surface-700 dark:text-surface-300">
+                                    {{ message }}
+                                </span>
+
+                            </div>
+
+                        {% endfor %}
+
+                    </div>
+
+                {% endif %}
+
+            {% endwith %}
+
+
+            <!-- ================================================= -->
+            <!-- ACCOUNT DETAILS -->
+            <!-- ================================================= -->
+
+            <section class="bg-white dark:bg-surface-900
+                            border border-surface-200 dark:border-surface-800
+                            rounded-card shadow-card p-6 mb-5">
+
+                <!-- Header -->
+
+                <div class="flex items-center justify-between gap-4 mb-6">
+
+                    <div class="flex items-center gap-3">
+
+                        <div class="w-11 h-11 rounded-xl
+                                    bg-brand-100 dark:bg-brand-950/50
+                                    flex items-center justify-center">
+
+                            <i data-lucide="user"
+                               class="w-5 h-5 text-brand-700 dark:text-brand-400"></i>
+
+                        </div>
+
+                        <div>
+
+                            <h2 class="text-lg font-semibold
+                                       text-surface-900 dark:text-white">
+                                Account
+                            </h2>
+
+                            <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">
+                                Your account information
+                            </p>
+
+                        </div>
+
+                    </div>
+
+
+                    <button
+                        type="button"
+                        onclick="toggleSettingsSection('edit-details')"
+                        class="inline-flex items-center gap-2
+                               px-4 py-2.5
+                               rounded-btn
+                               bg-brand-600 hover:bg-brand-700
+                               text-[#2E2E38]
+                               text-xs font-semibold
+                               transition-all">
+
+                        <i data-lucide="pencil" class="w-4 h-4"></i>
+
+                        Edit Details
+
+                    </button>
+
+                </div>
+
+
+                <!-- Current Details -->
+
+                <div class="grid sm:grid-cols-2 gap-5">
+
+                    <div class="p-4 rounded-btn
+                                bg-surface-50 dark:bg-surface-800
+                                border border-surface-100 dark:border-surface-700">
+
+                        <p class="text-xs uppercase tracking-wide
+                                  font-medium text-surface-400 mb-2">
+                            Name
+                        </p>
+
+                        <!-- IMPORTANT: username, NOT email -->
+                        <p class="text-sm font-semibold
+                                  text-surface-900 dark:text-white">
+                            {{ current_user.username }}
+                        </p>
+
+                    </div>
+
+
+                    <div class="p-4 rounded-btn
+                                bg-surface-50 dark:bg-surface-800
+                                border border-surface-100 dark:border-surface-700">
+
+                        <p class="text-xs uppercase tracking-wide
+                                  font-medium text-surface-400 mb-2">
+                            Email
+                        </p>
+
+                        <p class="text-sm font-semibold
+                                  text-surface-900 dark:text-white break-all">
+                            {{ current_user.email }}
+                        </p>
+
+                    </div>
+
+                </div>
+
+
+                <!-- ================================================= -->
+                <!-- EDIT DETAILS FORM -->
+                <!-- ================================================= -->
+
+                <div id="edit-details"
+                     class="hidden mt-6 pt-6
+                            border-t border-surface-200
+                            dark:border-surface-800">
+
+                    <div class="mb-5">
+
+                        <h3 class="text-sm font-semibold
+                                   text-surface-900 dark:text-white">
+                            Edit Account Details
+                        </h3>
+
+                        <p class="text-xs text-surface-500 dark:text-surface-400 mt-1">
+                            Update your name or email address.
+                        </p>
+
+                    </div>
+
+
+                    <form
+                        method="POST"
+                        action="{{ url_for('auth.edit_details') }}"
+                        class="space-y-5">
+
+                        <!-- CSRF -->
+
+                        <input
+                            type="hidden"
+                            name="csrf_token"
+                            value="{{ csrf_token() }}"
+                        >
+
+
+                        <!-- Name -->
+
+                        <div>
+
+                            <label
+                                for="settings-username"
+                                class="block text-sm font-medium
+                                       text-surface-700 dark:text-surface-300 mb-2">
+
+                                Name
+
+                            </label>
+
+                            <div class="relative">
+
+                                <i data-lucide="user"
+                                   class="absolute left-3 top-1/2
+                                          -translate-y-1/2
+                                          w-4 h-4 text-surface-400"></i>
+
+                                <input
+                                    id="settings-username"
+                                    type="text"
+                                    name="username"
+                                    value="{{ current_user.username }}"
+                                    minlength="3"
+                                    required
+                                    autocomplete="name"
+                                    class="w-full pl-10 pr-4 py-3
+                                           bg-surface-50 dark:bg-surface-800
+                                           border border-surface-200
+                                           dark:border-surface-700
+                                           rounded-input
+                                           text-sm
+                                           text-surface-900 dark:text-white
+                                           focus:outline-none
+                                           focus:ring-2
+                                           focus:ring-brand-500/20
+                                           focus:border-brand-500"
+                                >
+
+                            </div>
+
+                        </div>
+
+
+                        <!-- Email -->
+
+                        <div>
+
+                            <label
+                                for="settings-email"
+                                class="block text-sm font-medium
+                                       text-surface-700 dark:text-surface-300 mb-2">
+
+                                Email Address
+
+                            </label>
+
+                            <div class="relative">
+
+                                <i data-lucide="mail"
+                                   class="absolute left-3 top-1/2
+                                          -translate-y-1/2
+                                          w-4 h-4 text-surface-400"></i>
+
+                                <input
+                                    id="settings-email"
+                                    type="email"
+                                    name="email"
+                                    value="{{ current_user.email }}"
+                                    required
+                                    autocomplete="email"
+                                    class="w-full pl-10 pr-4 py-3
+                                           bg-surface-50 dark:bg-surface-800
+                                           border border-surface-200
+                                           dark:border-surface-700
+                                           rounded-input
+                                           text-sm
+                                           text-surface-900 dark:text-white
+                                           focus:outline-none
+                                           focus:ring-2
+                                           focus:ring-brand-500/20
+                                           focus:border-brand-500"
+                                >
+
+                            </div>
+
+                        </div>
+
+
+                        <!-- Buttons -->
+
+                        <div class="flex gap-3">
+
+                            <button
+                                type="submit"
+                                class="inline-flex items-center gap-2
+                                       px-4 py-2.5
+                                       rounded-btn
+                                       bg-brand-600 hover:bg-brand-700
+                                       text-[#2E2E38]
+                                       text-xs font-semibold">
+
+                                <i data-lucide="save" class="w-4 h-4"></i>
+
+                                Save Changes
+
+                            </button>
+
+
+                            <button
+                                type="button"
+                                onclick="toggleSettingsSection('edit-details')"
+                                class="px-4 py-2.5
+                                       rounded-btn
+                                       bg-surface-200 dark:bg-surface-800
+                                       text-surface-700 dark:text-surface-300
+                                       text-xs font-semibold">
+
+                                Cancel
+
+                            </button>
+
+                        </div>
+
+                    </form>
+
+                </div>
+
+            </section>
+
+
+            <!-- ================================================= -->
+            <!-- CHANGE PASSWORD -->
+            <!-- ================================================= -->
+
+            <section class="bg-white dark:bg-surface-900
+                            border border-surface-200 dark:border-surface-800
+                            rounded-card shadow-card p-6 mb-5">
+
+                <!-- Header -->
+
+                <div class="flex items-center justify-between gap-4">
+
+                    <div class="flex items-center gap-3">
+
+                        <div class="w-11 h-11 rounded-xl
+                                    bg-surface-100 dark:bg-surface-800
+                                    flex items-center justify-center">
+
+                            <i data-lucide="lock"
+                               class="w-5 h-5
+                                      text-surface-600 dark:text-surface-300"></i>
+
+                        </div>
+
+                        <div>
+
+                            <h2 class="text-lg font-semibold
+                                       text-surface-900 dark:text-white">
+                                Password
+                            </h2>
+
+                            <p class="text-xs text-surface-500
+                                      dark:text-surface-400 mt-1">
+                                Keep your account secure
+                            </p>
+
+                        </div>
+
+                    </div>
+
+
+                    <button
+                        type="button"
+                        onclick="toggleSettingsSection('change-password')"
+                        class="inline-flex items-center gap-2
+                               px-4 py-2.5
+                               rounded-btn
+                               bg-brand-600 hover:bg-brand-700
+                               text-[#2E2E38]
+                               text-xs font-semibold">
+
+                        <i data-lucide="key-round" class="w-4 h-4"></i>
+
+                        Change Password
+
+                    </button>
+
+                </div>
+
+
+                <!-- Password Form -->
+
+                <div id="change-password"
+                     class="hidden mt-6 pt-6
+                            border-t border-surface-200
+                            dark:border-surface-800">
+
+                    <form
+                        id="password-form"
+                        method="POST"
+                        action="{{ url_for('auth.change_password') }}"
+                        class="space-y-5">
+
+                        <!-- CSRF -->
+
+                        <input
+                            type="hidden"
+                            name="csrf_token"
+                            value="{{ csrf_token() }}"
+                        >
+
+
+                        <!-- Current Password -->
+
+                        <div>
+
+                            <label
+                                for="current-password"
+                                class="block text-sm font-medium
+                                       text-surface-700 dark:text-surface-300 mb-2">
+
+                                Current Password
+
+                            </label>
+
+                            <input
+                                id="current-password"
+                                type="password"
+                                name="current_password"
+                                required
+                                autocomplete="current-password"
+                                placeholder="Enter current password"
+                                class="w-full px-4 py-3
+                                       bg-surface-50 dark:bg-surface-800
+                                       border border-surface-200
+                                       dark:border-surface-700
+                                       rounded-input
+                                       text-sm
+                                       text-surface-900 dark:text-white
+                                       focus:outline-none
+                                       focus:ring-2
+                                       focus:ring-brand-500/20
+                                       focus:border-brand-500"
+                            >
+
+                        </div>
+
+
+                        <!-- New Password -->
+
+                        <div>
+
+                            <label
+                                for="new-password"
+                                class="block text-sm font-medium
+                                       text-surface-700 dark:text-surface-300 mb-2">
+
+                                New Password
+
+                            </label>
+
+                            <input
+                                id="new-password"
+                                type="password"
+                                name="new_password"
+                                minlength="6"
+                                required
+                                autocomplete="new-password"
+                                placeholder="Enter new password"
+                                class="w-full px-4 py-3
+                                       bg-surface-50 dark:bg-surface-800
+                                       border border-surface-200
+                                       dark:border-surface-700
+                                       rounded-input
+                                       text-sm
+                                       text-surface-900 dark:text-white
+                                       focus:outline-none
+                                       focus:ring-2
+                                       focus:ring-brand-500/20
+                                       focus:border-brand-500"
+                            >
+
+                            <p class="text-[11px] text-surface-400 mt-1.5">
+                                Minimum 6 characters.
+                            </p>
+
+                        </div>
+
+
+                        <!-- Confirm Password -->
+
+                        <div>
+
+                            <label
+                                for="confirm-password"
+                                class="block text-sm font-medium
+                                       text-surface-700 dark:text-surface-300 mb-2">
+
+                                Confirm New Password
+
+                            </label>
+
+                            <input
+                                id="confirm-password"
+                                type="password"
+                                name="confirm_password"
+                                minlength="6"
+                                required
+                                autocomplete="new-password"
+                                placeholder="Confirm new password"
+                                class="w-full px-4 py-3
+                                       bg-surface-50 dark:bg-surface-800
+                                       border border-surface-200
+                                       dark:border-surface-700
+                                       rounded-input
+                                       text-sm
+                                       text-surface-900 dark:text-white
+                                       focus:outline-none
+                                       focus:ring-2
+                                       focus:ring-brand-500/20
+                                       focus:border-brand-500"
+                            >
+
+                        </div>
+
+
+                        <!-- Buttons -->
+
+                        <div class="flex gap-3">
+
+                            <button
+                                type="submit"
+                                class="inline-flex items-center gap-2
+                                       px-4 py-2.5
+                                       rounded-btn
+                                       bg-brand-600 hover:bg-brand-700
+                                       text-[#2E2E38]
+                                       text-xs font-semibold">
+
+                                <i data-lucide="shield-check"
+                                   class="w-4 h-4"></i>
+
+                                Update Password
+
+                            </button>
+
+
+                            <button
+                                type="button"
+                                onclick="toggleSettingsSection('change-password')"
+                                class="px-4 py-2.5
+                                       rounded-btn
+                                       bg-surface-200 dark:bg-surface-800
+                                       text-surface-700 dark:text-surface-300
+                                       text-xs font-semibold">
+
+                                Cancel
+
+                            </button>
+
+                        </div>
+
+                    </form>
+
+                </div>
+
+            </section>
+
+
+            <!-- ================================================= -->
+            <!-- APPEARANCE -->
+            <!-- ================================================= -->
+
+            <section class="bg-white dark:bg-surface-900
+                            border border-surface-200 dark:border-surface-800
+                            rounded-card shadow-card p-6 mb-6">
+
+                <div class="flex items-center justify-between gap-4">
+
+                    <div class="flex items-center gap-3">
+
+                        <div class="w-11 h-11 rounded-xl
+                                    bg-brand-100 dark:bg-brand-950/50
+                                    flex items-center justify-center">
+
+                            <i data-lucide="sun-moon"
+                               class="w-5 h-5
+                                      text-brand-700 dark:text-brand-400"></i>
+
+                        </div>
+
+                        <div>
+
+                            <h2 class="text-lg font-semibold
+                                       text-surface-900 dark:text-white">
+
+                                Appearance
+
+                            </h2>
+
+                            <p class="text-xs text-surface-500
+                                      dark:text-surface-400 mt-1">
+
+                                Switch between light and dark mode.
+
+                            </p>
+
+                        </div>
+
+                    </div>
+
+
+                    <button
+                        type="button"
+                        onclick="toggleThemeFromSettings()"
+                        class="inline-flex items-center gap-2
+                               px-4 py-2.5
+                               rounded-btn
+                               bg-brand-600 hover:bg-brand-700
+                               text-[#2E2E38]
+                               text-xs font-semibold">
+
+                        <i data-lucide="sun-moon"
+                           class="w-4 h-4"></i>
+
+                        Toggle Theme
+
+                    </button>
+
+                </div>
+
+            </section>
+
+
+            <!-- ================================================= -->
+            <!-- ACTIONS -->
+            <!-- ================================================= -->
+
+            <div class="flex flex-wrap gap-3 pb-8">
+
+                <!-- Home -->
+
+                <a
+                    href="/home"
+                    class="inline-flex items-center gap-2
+                           px-4 py-2.5
+                           rounded-btn
+                           bg-surface-200 dark:bg-surface-800
+                           text-surface-700 dark:text-surface-300
+                           text-xs font-semibold
+                           hover:bg-surface-300
+                           dark:hover:bg-surface-700
+                           transition-all">
+
+                    <i data-lucide="house" class="w-4 h-4"></i>
+
+                    Back to Home
+
+                </a>
+
+
+                <!-- Profile -->
+
+                <a
+                    href="{{ url_for('auth.profile') }}"
+                    class="inline-flex items-center gap-2
+                           px-4 py-2.5
+                           rounded-btn
+                           bg-surface-200 dark:bg-surface-800
+                           text-surface-700 dark:text-surface-300
+                           text-xs font-semibold
+                           hover:bg-surface-300
+                           dark:hover:bg-surface-700
+                           transition-all">
+
+                    <i data-lucide="user" class="w-4 h-4"></i>
+
+                    Profile
+
+                </a>
+
+
+                <!-- Logout -->
+
+                <a
+                    href="{{ url_for('auth.logout') }}"
+                    class="inline-flex items-center gap-2
+                           px-4 py-2.5
+                           rounded-btn
+                           bg-red-50 dark:bg-red-950/30
+                           text-red-600 dark:text-red-400
+                           text-xs font-semibold
+                           hover:bg-red-100
+                           dark:hover:bg-red-950/50
+                           transition-all">
+
+                    <i data-lucide="log-out" class="w-4 h-4"></i>
+
+                    Logout
+
+                </a>
+
+            </div>
+
+        </div>
+
+    </main>
+
+</div>
+
+
+<!-- ========================================================= -->
+<!-- SETTINGS JAVASCRIPT -->
+<!-- ========================================================= -->
+
+<script>
+
+    /**
+     * Open / close a settings section.
+     */
+    function toggleSettingsSection(id) {
+
+        const section = document.getElementById(id);
+
+        if (!section) {
+            return;
+        }
+
+        section.classList.toggle("hidden");
+
+        if (typeof lucide !== "undefined") {
+            lucide.createIcons();
+        }
+    }
+
+
+    /**
+     * Theme toggle.
+     *
+     * Supports the ThemeManager used by the existing application.
+     * Falls back to the standard dark-mode class if ThemeManager
+     * is not available.
+     */
+    function toggleThemeFromSettings() {
+
+        if (
+            typeof ThemeManager !== "undefined" &&
+            typeof ThemeManager.toggle === "function"
+        ) {
+
+            ThemeManager.toggle();
+
+            return;
+        }
+
+        document.documentElement.classList.toggle("dark");
+
+        const isDark =
+            document.documentElement.classList.contains("dark");
+
+        localStorage.setItem(
+            "theme",
+            isDark ? "dark" : "light"
+        );
+    }
+
+
+    /**
+     * Client-side password confirmation.
+     */
+    document.addEventListener(
+        "DOMContentLoaded",
+        function () {
+
+            const form =
+                document.getElementById("password-form");
+
+            if (!form) {
+                return;
+            }
+
+            form.addEventListener(
+                "submit",
+                function (event) {
+
+                    const newPassword =
+                        document.getElementById("new-password");
+
+                    const confirmPassword =
+                        document.getElementById("confirm-password");
+
+                    if (
+                        newPassword.value !==
+                        confirmPassword.value
+                    ) {
+
+                        event.preventDefault();
+
+                        alert(
+                            "New passwords do not match."
+                        );
+
+                        confirmPassword.focus();
+                    }
+
+                }
+            );
+
+
+            if (typeof lucide !== "undefined") {
+                lucide.createIcons();
+            }
+
+        }
+    );
+
+</script>
+
+{% endblock %}

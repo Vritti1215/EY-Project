@@ -92,7 +92,7 @@
                     <i data-lucide="sun" class="w-3.5 h-3.5 dark:hidden"></i><i data-lucide="moon" class="w-3.5 h-3.5 hidden dark:block"></i>
                     <span class="text-[10px]">Theme</span>
                 </button>
-                <a href="/profile" class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-btn text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
+                <a href="/settings" class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-btn text-surface-400 hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors">
                     <i data-lucide="settings" class="w-3.5 h-3.5"></i><span class="text-[10px]">Settings</span>
                 </a>
                 <a href="/logout" class="flex-1 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-btn text-surface-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors">
@@ -119,6 +119,12 @@
                 <h2 class="text-sm font-semibold text-surface-900 dark:text-white truncate" id="chat-title">New Conversation</h2>
             </div>
             <div class="flex items-center gap-1">
+                <a href="/home"
+                   class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-btn text-xs font-medium text-surface-500 dark:text-surface-400 hover:text-surface-900 dark:hover:text-white hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors"
+                   title="Back to Home">
+                    <i data-lucide="house" class="w-4 h-4"></i>
+                    <span class="hidden sm:inline">Home</span>
+                </a>
                 <div class="relative" id="export-dropdown-container">
                     <button onclick="toggleExportMenu()" class="p-2 rounded-btn text-surface-400 hover:text-surface-700 dark:hover:text-white hover:bg-surface-100 dark:hover:bg-surface-800 transition-colors" title="Export chat">
                         <i data-lucide="download" class="w-4 h-4"></i>
@@ -193,6 +199,56 @@
                         <i data-lucide="x" class="w-3.5 h-3.5 text-surface-400 hover:text-red-500"></i>
                     </button>
                 </div>
+                <!-- Chart customization: options are sent to Flask and applied server-side. -->
+                <div id="chart-options" class="hidden mb-2 rounded-xl border border-surface-200 dark:border-surface-700 bg-surface-50 dark:bg-surface-900 p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <div class="flex items-center gap-2">
+                            <i data-lucide="bar-chart-3" class="w-4 h-4 text-brand-600"></i>
+                            <span class="text-xs font-semibold text-surface-700 dark:text-surface-200">Chart options</span>
+                        </div>
+                        <span class="text-[10px] text-surface-400">Applied when you request a graph/chart</span>
+                    </div>
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <label class="text-[10px] text-surface-500">Type
+                            <select id="chart-type" class="mt-1 w-full rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 px-2 py-1.5 text-xs">
+                                <option value="" selected>Auto (AI-recommended)</option>
+                                <option value="bar">Bar</option>
+                                <option value="barh">Horizontal bar</option>
+                                <option value="line">Line</option>
+                                <option value="area">Area</option>
+                                <option value="pie">Pie</option>
+                            </select>
+                        </label>
+                        <label class="text-[10px] text-surface-500">Colors / palette
+                            <select id="chart-palette" class="mt-1 w-full rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 px-2 py-1.5 text-xs">
+                                <option value="deep">Deep</option>
+                                <option value="colorblind">Colorblind</option>
+                                <option value="viridis">Viridis</option>
+                                <option value="mako">Mako</option>
+                                <option value="rocket">Rocket</option>
+                                <option value="flare">Flare</option>
+                                <option value="crest">Crest</option>
+                                <option value="coolwarm">Coolwarm</option>
+                                <option value="pastel">Pastel</option>
+                                <option value="bright">Bright</option>
+                                <option value="muted">Muted</option>
+                                <option value="dark">Dark</option>
+                            </select>
+                        </label>
+                        <label class="text-[10px] text-surface-500">Style
+                            <select id="chart-style" class="mt-1 w-full rounded-lg border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-800 px-2 py-1.5 text-xs">
+                                <option value="darkgrid">Dark grid</option>
+                                <option value="whitegrid">White grid</option>
+                                <option value="white">White</option>
+                                <option value="dark">Dark</option>
+                                <option value="ticks">Ticks</option>
+                            </select>
+                        </label>
+                        <label class="text-[10px] text-surface-500">Quick request
+                            <button type="button" onclick="insertChartPrompt()" class="mt-1 w-full rounded-lg bg-brand-600 hover:bg-brand-700 px-2 py-1.5 text-xs font-medium text-[#2E2E38]">Add chart wording</button>
+                        </label>
+                    </div>
+                </div>
                 <form id="chat-form" class="relative">
                     <div class="bg-surface-50 dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-2xl p-1.5 shadow-card focus-within:border-brand-400 focus-within:shadow-btn transition-all">
                         <textarea id="message-input" rows="1"
@@ -200,12 +256,24 @@
                             placeholder="Ask me anything..." maxlength="4000"></textarea>
                         <div class="flex items-center justify-between px-2 pb-1">
                             <div class="flex items-center gap-1">
+                                <!--
+                                    FIXED: previously a <button> for "attach file" opened here
+                                    and was never closed before a second <button> for "chart
+                                    options" opened inside it — invalid nested-button HTML that
+                                    browsers silently reparent/duplicate unpredictably. Each
+                                    button below is now properly opened AND closed on its own,
+                                    in the same visual order as before (paperclip, then sliders).
+                                -->
                                 <input type="file" id="file-input" class="hidden"
                                        accept=".pdf,.docx,.txt,.csv,.xlsx,.xls"
                                        onchange="handleFileSelect(this)">
                                 <button type="button" onclick="document.getElementById('file-input').click()"
                                     class="p-2 rounded-btn text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors" title="Attach file (PDF, DOCX, CSV, Excel)">
                                     <i data-lucide="paperclip" class="w-4 h-4"></i>
+                                </button>
+                                <button type="button" onclick="toggleChartOptions()"
+                                    class="p-2 rounded-btn text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors" title="Chart options">
+                                    <i data-lucide="sliders-horizontal" class="w-4 h-4"></i>
                                 </button>
                                 <span id="char-count" class="text-[10px] text-surface-400 hidden">0/4000</span>
                             </div>
@@ -232,6 +300,34 @@ let attachedFile = null;
 const chatMessages = document.getElementById('chat-messages'), welcomeScreen = document.getElementById('welcome-screen');
 const messageInput = document.getElementById('message-input'), sendBtn = document.getElementById('send-btn');
 const chatForm = document.getElementById('chat-form'), chatTitle = document.getElementById('chat-title'), charCount = document.getElementById('char-count');
+
+// Tracks whether the user has explicitly touched the palette/style
+// customization controls. Only when true do we send those values to the
+// server as an override — otherwise they're omitted so the backend uses
+// its own defaults. (chart_type itself doesn't need this: its select has
+// a dedicated "Auto (AI-recommended)" option with value="", handled at
+// the point chart_type is appended to formData below.)
+let chartOptionsUserTouched = { palette: false, style: false };
+
+function toggleChartOptions() {
+    const panel = document.getElementById('chart-options');
+    panel.classList.toggle('hidden');
+    if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+function insertChartPrompt() {
+    const input = document.getElementById('message-input');
+    const current = input.value.trim();
+    if (!current) input.value = 'Create a chart showing ';
+    else if (!/\b(chart|graph|plot|visuali[sz]e|diagram)\b/i.test(current)) input.value = current + ' and show it as a chart';
+    input.dispatchEvent(new Event('input'));
+    input.focus();
+}
+
+// Mark a control as explicitly chosen by the user the moment they change
+// it, so the submit handler knows to send it as a real override rather
+// than a leftover default value.
+document.getElementById('chart-palette')?.addEventListener('change', () => { chartOptionsUserTouched.palette = true; });
+document.getElementById('chart-style')?.addEventListener('change', () => { chartOptionsUserTouched.style = true; });
 
 // ── File attachment helpers ──
 function getFileIcon(ext) {
@@ -290,6 +386,22 @@ chatForm.addEventListener('submit', async function(e) {
         const formData = new FormData();
         formData.append('message', message);
         if (currentConversationId) formData.append('conversation_id', currentConversationId);
+        // chart-type's "Auto (AI-recommended)" option has value="" — only
+        // append chart_type when the user picked an explicit type. Sending
+        // it on every request (even the untouched default) was forcing the
+        // backend's _resolve_chart_type() into its 'override' branch every
+        // time, so the AI-assisted suggest_chart_type() call — the thing
+        // that's supposed to pick the best chart type per question — never
+        // actually ran. Omitting it here lets the server decide
+        // automatically unless the user explicitly overrides it.
+        const chartTypeChoice = document.getElementById('chart-type')?.value;
+        if (chartTypeChoice) formData.append('chart_type', chartTypeChoice);
+        if (chartOptionsUserTouched.palette) {
+            formData.append('chart_palette', document.getElementById('chart-palette').value);
+        }
+        if (chartOptionsUserTouched.style) {
+            formData.append('chart_style', document.getElementById('chart-style').value);
+        }
         if (attachedFile) formData.append('files', attachedFile);
 
         const r = await fetch('/chat/send', {
@@ -299,7 +411,7 @@ chatForm.addEventListener('submit', async function(e) {
         });
         const d = await r.json(); removeTypingIndicator();
         if (d.success) {
-            appendMessage('ai', d.response, d.timestamp, d.response_time);
+            appendMessage('ai', d.response, d.timestamp, d.response_time, d.chart_image);
             currentConversationId = d.conversation_id;
             chatTitle.textContent = d.conversation_title;
             updateConversationList(d.conversation_id, d.conversation_title);
@@ -314,16 +426,57 @@ chatForm.addEventListener('submit', async function(e) {
     }
 });
 
-function appendMessage(role, content, timestamp, responseTime) {
+function appendMessage(role, content, timestamp, responseTime, chartImage) {
     const now = timestamp || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const div = document.createElement('div'); div.className = 'chat-bubble mb-4 max-w-3xl mx-auto';
+    const div = document.createElement('div');
+    div.className = 'chat-bubble mb-4 max-w-3xl mx-auto';
+
     if (role === 'user') {
         div.innerHTML = `<div class="flex justify-end"><div class="max-w-[75%]"><div class="bg-brand-600 rounded-bubble rounded-tr-md px-4 py-3"><p class="text-sm text-[#2E2E38] whitespace-pre-wrap">${escapeHtml(content)}</p></div><p class="text-[10px] text-surface-400 mt-1 text-right">${now}</p></div></div>`;
     } else {
-        let html; try { html = marked.parse(content); } catch { html = escapeHtml(content).replace(/\n/g, '<br>'); }
-        div.innerHTML = `<div class="flex gap-3"><div class="w-7 h-7 rounded-lg bg-brand-100 dark:bg-brand-950 flex items-center justify-center flex-shrink-0 mt-0.5"><i data-lucide="sparkles" class="w-3.5 h-3.5 text-brand-600 dark:text-brand-400"></i></div><div class="max-w-[80%] min-w-0"><div class="prose-ai text-sm text-surface-700 dark:text-surface-300">${html}</div><div class="flex items-center gap-3 mt-1.5"><p class="text-[10px] text-surface-400">${now}</p>${responseTime ? `<p class="text-[10px] text-surface-400">⚡ ${responseTime}s</p>` : ''}<button onclick="copyMessage(this)" class="text-[10px] text-surface-400 hover:text-brand-600 transition-colors flex items-center gap-1"><i data-lucide="copy" class="w-3 h-3"></i></button></div></div></div>`;
+        let html;
+        try { html = marked.parse(content || ''); }
+        catch { html = escapeHtml(content || '').replace(/\n/g, '<br>'); }
+
+        let chartHtml = '';
+        if (chartImage && typeof chartImage === 'string' && chartImage.startsWith('data:image/')) {
+            const mime = chartImage.substring(5, chartImage.indexOf(';')) || 'image/png';
+            const extension = mime === 'image/jpeg' ? 'jpg' : (mime.split('/')[1] || 'png');
+            chartHtml = `
+                <div class="mt-4 rounded-xl border border-surface-200 dark:border-surface-700 bg-white dark:bg-surface-900 p-3 shadow-sm">
+                    <img src="${chartImage}" alt="Generated chart"
+                         class="w-full max-w-3xl rounded-lg" loading="lazy">
+                    <div class="flex items-center justify-between gap-2 mt-3">
+                        <span class="text-[10px] text-surface-400">Generated from the uploaded data using Python</span>
+                        <a href="${chartImage}" download="financial_chart.${extension}"
+                           class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-600 text-[#2E2E38] text-xs font-medium hover:bg-brand-700">
+                            <i data-lucide="download" class="w-3.5 h-3.5"></i> Download chart
+                        </a>
+                    </div>
+                </div>`;
+        }
+
+        div.innerHTML = `
+            <div class="flex gap-3">
+                <div class="w-7 h-7 rounded-lg bg-brand-100 dark:bg-brand-950 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-brand-600 dark:text-brand-400"></i>
+                </div>
+                <div class="max-w-[80%] min-w-0">
+                    <div class="prose-ai text-sm text-surface-700 dark:text-surface-300">${html}</div>
+                    ${chartHtml}
+                    <div class="flex items-center gap-3 mt-1.5">
+                        <p class="text-[10px] text-surface-400">${now}</p>
+                        ${responseTime ? `<p class="text-[10px] text-surface-400">⚡ ${responseTime}s</p>` : ''}
+                        <button onclick="copyMessage(this)" class="text-[10px] text-surface-400 hover:text-brand-600 transition-colors flex items-center gap-1">
+                            <i data-lucide="copy" class="w-3 h-3"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>`;
     }
-    chatMessages.appendChild(div); chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 function showTypingIndicator() {
@@ -339,7 +492,7 @@ async function loadConversation(id) {
     try { const r = await fetch(`/chat/history/${id}`); const d = await r.json();
     if (d.success) { currentConversationId = id; chatTitle.textContent = d.title; welcomeScreen.style.display = 'none';
     chatMessages.querySelectorAll('.chat-bubble').forEach(b => b.remove());
-    d.messages.forEach(m => { appendMessage('user', m.prompt, m.timestamp); appendMessage('ai', m.response, m.timestamp, m.response_time); });
+    d.messages.forEach(m => { appendMessage('user', m.prompt, m.timestamp); appendMessage('ai', m.response, m.timestamp, m.response_time, m.chart_image); });
     document.querySelectorAll('.conv-item').forEach(el => el.classList.toggle('active', parseInt(el.dataset.id) === id));
     if (window.innerWidth < 1024) toggleSidebar(); }} catch(e) { console.error(e); }
 }

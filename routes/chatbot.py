@@ -38,7 +38,7 @@ from services.insight_service import (
 # --- NEW: feature modules -----------------------------------------------
 from services.chart_recommender import recommend_chart_set
 from services.chart_customization import parse_chart_customization, apply_month_range_filter
-from services.prompt_guidance import classify_prompt_intent, system_prompt_for
+from services.prompt_guidance import classify_prompt_intent, system_prompt_for, EDGE_CASE_INSTRUCTIONS
 from services.data_profile_service import build_data_profile, validate_profile
 # --------------------------------------------------------------------------
 
@@ -781,6 +781,7 @@ def send_message():
             "recalculate or estimate your own totals. Format your responses with markdown "
             "tables when showing data comparisons. Be precise with numbers and cite specific "
             "rows/columns/periods/categories from the data."
+            f"{EDGE_CASE_INSTRUCTIONS}"
         )
     elif intent.category != 'general_chat':
         # Vague / chart-no-data / unsupported-column cases still apply

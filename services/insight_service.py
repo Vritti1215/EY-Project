@@ -61,6 +61,70 @@ _GROUP_COLUMN_MIN_LENGTH = 3
 VALID_CHART_TYPES = ('bar', 'barh', 'line', 'area', 'pie')
 
 
+
+def suggest_chart_type(
+    labels,
+    values,
+    is_time_series=False,
+    ai_service=None,
+    group_label=None,
+):
+    """
+    Choose a chart type deterministically, with an optional AI refinement.
+
+    The heuristic always provides a safe fallback. AI is only allowed to
+    choose from VALID_CHART_TYPES and cannot change the underlying data.
+    """
+    labels = list(labels or [])
+    values = list(values or [])
+    count = len(labels)
+
+    # Guaranteed deterministic fallback.
+    if count == 0:
+        heuristic = "bar"
+    elif is_time_series:
+        heuristic = "line"
+    elif count > 12:
+        heuristic = "barh"
+    elif count <= 6:
+        heuristic = "bar"
+    else:
+        heuristic = "bar"
+
+    if ai_service is None:
+        return heuristic, "heuristic"
+
+    try:
+        prompt = (
+            "Choose the best chart type for this dataset. "
+            f"Chart types allowed: {', '.join(VALID_CHART_TYPES)}. "
+            f"Time series: {bool(is_time_series)}. "
+            f"Number of categories/points: {count}. "
+            f"Group/metric: {group_label or 'unknown'}. "
+            "Reply with ONLY one chart type."
+        )
+        response = ai_service.get_chat_response(
+            prompt,
+            conversation_history=[],
+            system_prompt=(
+                "You are a chart-selection assistant. "
+                "Return exactly one value from: bar, barh, line, area, pie."
+            ),
+        )
+        candidate = str(response or "").strip().lower()
+        candidate = re.sub(r"[^a-z]", "", candidate)
+        if candidate in VALID_CHART_TYPES:
+            # Pie is only sensible for a small categorical breakdown.
+            if candidate == "pie" and (is_time_series or count > 8):
+                return heuristic, "heuristic"
+            if candidate in ("line", "area") and not is_time_series:
+                return heuristic, "heuristic"
+            return candidate, "ai"
+    except Exception:
+        logger.exception("AI chart-type suggestion failed; using heuristic.")
+
+    return heuristic, "heuristic"
+
 def find_column(columns, aliases):
     """Return the first column whose lowercased name contains any alias."""
     for col in columns:
@@ -554,153 +618,155 @@ def extract_time_from_question(message):
     return None
 
 
-def build_ai_context(monthly=None, quarterly=None, categories=None,
-                      category_label=None, fiscal_start_month=4):
-    """
-    Turn pre-computed totals into a short, unambiguous text block the AI
-    can quote from directly instead of re-deriving numbers itself.
-    """
-    lines = ['Pre-computed figures (authoritative — do not recalculate, estimate, '
-              'or write/simulate code to reproduce these):']
-    if fiscal_start_month != 1 and (monthly or quarterly):
-        start_name = MONTH_NUM_TO_SHORT[fiscal_start_month]
-        lines.append(f'(Quarters follow a fiscal year starting {start_name}: Q1={start_name}-...)')
-    if monthly:
-        lines.append('Monthly totals:')
-        lines += [f'  - {name}: {total:,.2f}' for _, name, total in monthly]
-    if quarterly:
-        lines.append('Quarterly totals:')
-        lines += [f'  - {q}: {total:,.2f}' for q, total in quarterly.items()]
-    if categories:
-        labels, values = categories
-        label = category_label or 'Category'
-        lines.append(f'{label} breakdown:')
-        lines += [f'  - {l}: {v:,.0f}' for l, v in zip(labels, values)]
-    return '\n'.join(lines)
-
-
-# ---------------------------------------------------------------------------
-# AI-assisted chart type selection
-# ---------------------------------------------------------------------------
-
-def _heuristic_chart_type(labels, values, is_time_series=False):
-    """
-    Deterministic fallback chart-type pick. Always returns a valid type.
-    Used as (a) the baseline sent to the AI as context, and (b) the safe
-    fallback if the AI call fails, times out, or returns something the
-    renderer doesn't support.
-    """
-    n = len(labels)
-    if n == 0:
-        return 'bar'
-
-    numeric_values = [v for v in values if isinstance(v, (int, float))]
-    all_positive = bool(numeric_values) and all(v >= 0 for v in numeric_values)
-    total = sum(numeric_values) if numeric_values else 0
-
-    if is_time_series:
-        return 'line'
-    if n <= 6 and all_positive and total > 0:
-        return 'pie'
-    if n > 12:
-        return 'barh'
-    return 'bar'
-
-
-def suggest_chart_type(labels, values, is_time_series=False, ai_service=None,
-                        group_label=None):
-    """
-    Decide the best chart type for a (labels, values) dataset.
-
-    Always computes a deterministic heuristic first. If an ai_service is
-    provided, makes ONE AI call per invocation (by design — this runs on
-    every chart request, trading a small amount of latency for a
-    data-aware pick rather than only using the cheap heuristic). If the
-    AI call fails, times out, or returns anything outside
-    VALID_CHART_TYPES, the heuristic result is used instead — chart
-    generation is never blocked by an AI/network failure.
-
-    Args:
-        labels: category/period labels for the chart.
-        values: numeric values, same length as labels.
-        is_time_series: True for month/quarter data (informs both the
-            heuristic and the AI prompt).
-        ai_service: an object exposing get_chat_response(prompt,
-            system_prompt=...) -> {'response': str, ...}. Pass None to
-            skip the AI call and use the heuristic only.
-        group_label: optional column/category name, included in the
-            prompt for extra context (e.g. "Department", "Month").
-
-    Returns:
-        tuple(str, str): (chart_type, source) where chart_type is one of
-        'bar', 'barh', 'line', 'area', 'pie', and source is one of:
-          - 'ai'         — the AI call succeeded and its pick was used
-          - 'heuristic'  — no ai_service was given, or no labels/data
-          - 'heuristic_fallback' — the AI call ran but failed/timed out/
-            returned an unusable value, so the heuristic was used instead
-        The source string exists specifically so callers (and ultimately
-        logs/UI) can verify whether the AI is actually being consulted,
-        rather than silently trusting it.
-    """
-    heuristic = _heuristic_chart_type(labels, values, is_time_series)
-
-    if ai_service is None or not labels:
-        logger.info(
-            f"Chart type '{heuristic}' chosen by heuristic only "
-            f"(ai_service={'not provided' if ai_service is None else 'no labels'})."
-        )
-        return heuristic, 'heuristic'
-
-    numeric_values = [v for v in values if isinstance(v, (int, float))]
-    value_range = (
-        f"{min(numeric_values):.1f} to {max(numeric_values):.1f}"
-        if numeric_values else "unknown"
-    )
-    all_positive = bool(numeric_values) and all(v >= 0 for v in numeric_values)
-
-    prompt = (
-        f"Dataset to chart:\n"
-        f"- Number of categories/periods: {len(labels)}\n"
-        f"- Category label: {group_label or 'N/A'}\n"
-        f"- Value range: {value_range}\n"
-        f"- All values non-negative: {all_positive}\n"
-        f"- Time-ordered data (e.g. months/quarters): {is_time_series}\n"
-        f"- Sample labels: {', '.join(str(l) for l in labels[:5])}\n\n"
-        "Pick the single best chart type for visualizing this data, choosing "
-        "ONLY from: bar, barh, line, area, pie.\n"
-        "Guidance: pie only for a small number of categories that represent "
-        "parts of one whole; line or area for time-ordered/trend data; barh "
-        "for many categories or long label text; bar as the general default.\n"
-        "Reply with ONLY the single chart type word — no punctuation, no "
-        "explanation."
-    )
-
-    logger.info(f"Requesting AI chart-type suggestion (heuristic baseline: '{heuristic}')...")
-
+def _safe_float(value):
+    """Convert spreadsheet numeric values safely for display."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        value = (value.replace(',', '').replace('$', '').replace('₹', '')
+                      .replace('€', '').replace('£', '').strip())
     try:
-        result = ai_service.get_chat_response(
-            prompt,
-            system_prompt=(
-                "You are a data visualization expert. You reply with exactly "
-                "one word: one of bar, barh, line, area, pie. Never add any "
-                "other text."
-            )
-        )
-        raw_response = result.get('response') or ''
-        choice = raw_response.strip().lower()
-        # Be lenient about stray punctuation/quotes the model might add.
-        choice = re.sub(r'[^a-z]', '', choice)
-        if choice in VALID_CHART_TYPES:
-            logger.info(f"AI chart-type suggestion: '{choice}' (raw response: {raw_response!r})")
-            return choice, 'ai'
-        logger.warning(
-            f"AI chart-type suggestion returned unusable value {raw_response!r} "
-            f"(parsed as {choice!r}), falling back to heuristic '{heuristic}'."
-        )
-    except Exception as e:
-        logger.warning(
-            f"AI chart-type suggestion call raised an exception ({e!r}), "
-            f"falling back to heuristic '{heuristic}'."
-        )
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
-    return heuristic, 'heuristic_fallback'
+
+def build_ai_context(value_match=None, monthly=None, quarterly=None,
+                     categories=None, category_label=None,
+                     fiscal_start_month=4):
+    """Build authoritative AI context without crashing on string numerics."""
+    lines = [
+        "Pre-computed figures (authoritative — do not recalculate, estimate, "
+        "or write/simulate code to reproduce these):"
+    ]
+
+    if fiscal_start_month != 1 and (monthly or quarterly):
+        try:
+            start_name = MONTH_NUM_TO_SHORT[int(fiscal_start_month)]
+            lines.append(
+                f"Fiscal year starts in {start_name}; Q1 begins in that month."
+            )
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    if monthly:
+        lines.append("Monthly totals:")
+        for item in monthly:
+            try:
+                if len(item) >= 3:
+                    _, name, total = item
+                else:
+                    name, total = item
+                numeric = _safe_float(total)
+                if numeric is not None:
+                    lines.append(f"  - {name}: {numeric:,.2f}")
+                else:
+                    lines.append(f"  - {name}: {total}")
+            except (TypeError, ValueError, IndexError):
+                lines.append(f"  - {item}")
+
+    if quarterly:
+        lines.append("Quarterly totals:")
+        items = quarterly.items() if isinstance(quarterly, dict) else quarterly
+        for item in items:
+            try:
+                q, total = item
+                numeric = _safe_float(total)
+                if numeric is not None:
+                    lines.append(f"  - {q}: {numeric:,.2f}")
+                else:
+                    lines.append(f"  - {q}: {total}")
+            except (TypeError, ValueError, IndexError):
+                lines.append(f"  - {item}")
+
+    if categories:
+        try:
+            labels, values = categories
+            lines.append(f"{category_label or 'Category'} breakdown:")
+            for label, value in zip(labels, values):
+                numeric = _safe_float(value)
+                if numeric is not None:
+                    lines.append(f"  - {label}: {numeric:,.2f}")
+                else:
+                    lines.append(f"  - {label}: {value}")
+        except (TypeError, ValueError):
+            pass
+
+    if value_match:
+        if isinstance(value_match, dict):
+            lines.extend(f"{k}: {v}" for k, v in value_match.items())
+        else:
+            lines.append(str(value_match))
+
+    return "\n".join(lines)
+
+def build_no_match_context(columns):
+    return (
+        "A real tabular dataset is available, but no calculation could be "
+        "confidently matched to the user's wording. Do not invent a value. "
+        f"Available columns: {', '.join(map(str, columns))}"
+    )
+
+
+def detect_value_query(df, message):
+    if df is None or df.empty:
+        return None
+    text = _normalize_text(message)
+    columns = list(df.columns)
+
+    # Prefer the longest exact normalized column-name mention.
+    mentioned = None
+    for col in sorted(columns, key=lambda c: len(_normalize_text(c)), reverse=True):
+        norm = _normalize_text(col)
+        if len(norm) >= 3 and norm in text:
+            mentioned = col
+            break
+
+    if mentioned is not None:
+        series = df[mentioned]
+        # Exact value lookup.
+        for raw in series.dropna().tolist():
+            value = str(raw).strip()
+            if len(value) >= 2 and _normalize_text(value) in text:
+                mask = series.astype(str).str.strip().str.casefold() == value.casefold()
+                return {
+                    "Column": str(mentioned),
+                    "Requested value": value,
+                    "Count": f"{int(mask.sum()):,}",
+                }
+
+    if is_count_query(message):
+        group = detect_group_column(df.columns, message)
+        if group:
+            counts = df[group].dropna().astype(str).str.strip().value_counts()
+            if len(counts):
+                return {
+                    "Column": str(group),
+                    "Aggregation": "count",
+                    "Total rows": f"{int(counts.sum()):,}",
+                    "Top categories": "; ".join(
+                        f"{k}: {int(v):,}" for k, v in counts.head(10).items()
+                    ),
+                }
+    return None
+
+
+def looks_like_data_question(message):
+    text = (message or "").lower()
+    terms = (
+        "data", "dataset", "excel", "spreadsheet", "column", "row", "value",
+        "total", "sum", "average", "mean", "highest", "lowest", "maximum",
+        "minimum", "count", "how many", "sales", "revenue", "cost", "price",
+        "marks", "students", "campus", "venue", "batch", "trend", "chart",
+        "graph", "plot", "visualize", "breakdown", "distribution", "quarter",
+        "month", "year",
+    )
+    return any(x in text for x in terms)
+
+
+def looks_like_clarifying_reply(response):
+    text = (response or "").lower()
+    return any(x in text for x in (
+        "which column", "please specify", "could you specify",
+        "what column", "which metric", "which category",
+    ))

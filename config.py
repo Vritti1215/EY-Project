@@ -67,6 +67,10 @@ class Config:
     # 4 = Indian-style fiscal year (Q1 = Apr-Jun). Defaults to 4 for this
     # deployment; set FISCAL_YEAR_START_MONTH=1 for calendar quarters.
     FISCAL_YEAR_START_MONTH = int(os.environ.get('FISCAL_YEAR_START_MONTH', 4))
+    CHART_AI_ENABLED = os.environ.get('CHART_AI_ENABLED', 'true').lower() == 'true'
+    CHART_MAX_POINTS = int(os.environ.get('CHART_MAX_POINTS', 60))
+    CHART_ALTERNATIVES = int(os.environ.get('CHART_ALTERNATIVES', 2))
+
 
     # Session Configuration
     PERMANENT_SESSION_LIFETIME = 3600  # 1 hour session timeout

@@ -31,6 +31,25 @@ import seaborn as sns
 logger = logging.getLogger(__name__)
 
 CHART_TYPES = ('bar', 'barh', 'line', 'area', 'pie')
+CUSTOM_PALETTES = {
+    # EY-style base palette: black / yellow / grey / white.
+    'ey': ['#2E2E38', '#FFE600', '#6B6B76', '#D9D9DE', '#FFFFFF'],
+    'yellow': ['#FFE600', '#E6CF00', '#2E2E38', '#6B6B76'],
+    'black': ['#2E2E38', '#4A4A52', '#6B6B76', '#8A8A92'],
+    'grey': ['#4A4A52', '#6B6B76', '#9A9AA2', '#D9D9DE'],
+    'white': ['#FFFFFF', '#D9D9DE', '#9A9AA2', '#4A4A52'],
+    'blue': ['#2563EB', '#60A5FA', '#1D4ED8', '#93C5FD'],
+    'red': ['#DC2626', '#F87171', '#B91C1C', '#FCA5A5'],
+    'green': ['#16A34A', '#4ADE80', '#15803D', '#86EFAC'],
+    'multi': ['#FFE600', '#2563EB', '#DC2626', '#16A34A', '#2E2E38', '#6B6B76'],
+}
+
+def _palette_values(name, n):
+    key = str(name or '').lower()
+    if key in CUSTOM_PALETTES:
+        base = CUSTOM_PALETTES[key]
+        return [base[i % len(base)] for i in range(max(1, n))]
+    return sns.color_palette(name or 'viridis', max(1, n))
 
 
 class ChartService:
@@ -57,7 +76,7 @@ class ChartService:
 
     def render_png_bytes(self, labels, values, chart_type='bar', title='Chart',
                           xlabel='', ylabel='', palette=None, style=None,
-                          dpi=None, figsize=None, value_format='{:,.0f}'):
+                          dpi=None, figsize=None, value_format='{:,.0f}', show_data_labels=True, show_variance=False, show_trend=False):
         """
         Render a chart to raw PNG bytes.
 
@@ -70,6 +89,9 @@ class ChartService:
                 instance defaults — this is the "max configurability" knob;
                 any of these can be passed straight through from a request.
             value_format: format string applied to bar/line value labels.
+            show_data_labels: show values on bars/lines when supported.
+            show_variance: show a real-data +/- 1 standard deviation band for line/area.
+            show_trend: show a linear trend line for line/area charts.
 
         Returns:
             bytes: PNG image data.
@@ -82,48 +104,80 @@ class ChartService:
         sns.set_style(style or self.style)
         sns.set_context(self.context)
         active_palette = palette or self.palette
+        palette_values = _palette_values(active_palette, len(labels))
 
         fig, ax = plt.subplots(figsize=figsize or self.figsize, dpi=dpi or self.dpi)
 
         try:
             if chart_type == 'bar':
                 sns.barplot(x=list(labels), y=list(values), hue=list(labels),
-                            palette=active_palette, legend=False, ax=ax)
-                for i, v in enumerate(values):
-                    ax.text(i, v, value_format.format(v), ha='center', va='bottom', fontsize=9)
+                            palette=palette_values, legend=False, ax=ax)
+                if show_data_labels:
+                    for i, v in enumerate(values):
+                        ax.text(i, v, value_format.format(v), ha='center', va='bottom', fontsize=9)
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
                 plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
 
             elif chart_type == 'barh':
                 sns.barplot(y=list(labels), x=list(values), hue=list(labels),
-                            palette=active_palette, legend=False, ax=ax)
+                            palette=palette_values, legend=False, ax=ax)
                 ax.set_xlabel(ylabel)
                 ax.set_ylabel(xlabel)
 
             elif chart_type == 'line':
-                colors = sns.color_palette(active_palette, 1)
+                colors = _palette_values(active_palette, 1)
                 sns.lineplot(x=list(labels), y=list(values), marker='o',
                              color=colors[0], ax=ax)
-                for i, v in enumerate(values):
-                    ax.text(i, v, value_format.format(v), ha='center', va='bottom', fontsize=9)
+                if show_data_labels:
+                    for i, v in enumerate(values):
+                        ax.text(i, v, value_format.format(v), ha='center', va='bottom', fontsize=9)
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
                 plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
+                if show_variance and len(values) > 1:
+                    import numpy as np
+                    mean = float(np.mean(values))
+                    std = float(np.std(values))
+                    ax.axhline(mean, linestyle='--', linewidth=1, alpha=0.55, label='Mean')
+                    ax.axhspan(mean - std, mean + std, alpha=0.12, label='±1 SD')
+                    ax.legend(fontsize=8)
+                if show_trend and len(values) > 1:
+                    import numpy as np
+                    x = np.arange(len(values), dtype=float)
+                    slope, intercept = np.polyfit(x, np.asarray(values, dtype=float), 1)
+                    ax.plot(x, slope * x + intercept, linestyle='--', linewidth=1.2, label='Trend')
+                    ax.legend(fontsize=8)
 
             elif chart_type == 'area':
-                colors = sns.color_palette(active_palette, 1)
+                colors = _palette_values(active_palette, 1)
                 x_positions = range(len(labels))
                 ax.fill_between(x_positions, values, alpha=0.4, color=colors[0])
                 ax.plot(x_positions, values, marker='o', color=colors[0])
                 ax.set_xticks(list(x_positions))
                 ax.set_xticklabels(labels)
+                if show_data_labels:
+                    for i, v in enumerate(values):
+                        ax.text(i, v, value_format.format(v), ha='center', va='bottom', fontsize=9)
+                if show_variance and len(values) > 1:
+                    import numpy as np
+                    mean = float(np.mean(values))
+                    std = float(np.std(values))
+                    ax.axhspan(mean - std, mean + std, alpha=0.12, label='±1 SD')
+                    ax.axhline(mean, linestyle='--', linewidth=1, alpha=0.55, label='Mean')
+                    ax.legend(fontsize=8)
+                if show_trend and len(values) > 1:
+                    import numpy as np
+                    x = np.arange(len(values), dtype=float)
+                    slope, intercept = np.polyfit(x, np.asarray(values, dtype=float), 1)
+                    ax.plot(x, slope * x + intercept, linestyle='--', linewidth=1.2, label='Trend')
+                    ax.legend(fontsize=8)
                 ax.set_xlabel(xlabel)
                 ax.set_ylabel(ylabel)
                 plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
 
             elif chart_type == 'pie':
-                colors = sns.color_palette(active_palette, len(labels))
+                colors = _palette_values(active_palette, len(labels))
                 ax.pie(values, labels=labels, autopct='%1.1f%%', colors=colors,
                        startangle=90)
                 ax.axis('equal')

@@ -11,7 +11,6 @@ import os
 import logging
 import json
 import statistics
-import pandas as pd
 from flask import Blueprint, render_template, request, jsonify, send_file, current_app
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
@@ -60,6 +59,34 @@ NO_FAKE_CODE_INSTRUCTION = (
 )
 
 
+def _parse_bool_field(value):
+    """
+    Parse a boolean form/JSON field into True/False/None.
+    None means "not sent" — the caller should fall back to text-parsed
+    customization or a hardcoded default, same precedence pattern used
+    for chart_type/chart_palette/chart_style overrides.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in ('true', '1', 'on', 'yes'):
+        return True
+    if text in ('false', '0', 'off', 'no'):
+        return False
+    return None
+
+
+def _resolve_bool(explicit_override, text_parsed, default):
+    """Explicit UI override > natural-language mention > hardcoded default."""
+    if explicit_override is not None:
+        return explicit_override
+    if text_parsed is not None:
+        return text_parsed
+    return default
+
+
 def _latest_tabular_upload(user_id):
     return UploadedFile.query.filter(
         UploadedFile.user_id == user_id,
@@ -80,6 +107,7 @@ def _build_chart(
     show_data_labels=True,
     show_variance=False,
     show_trend=False,
+    noise_variance=None,
 ):
     """Render one chart and return its base64 data URI."""
     try:
@@ -95,6 +123,7 @@ def _build_chart(
             show_data_labels=show_data_labels,
             show_variance=show_variance,
             show_trend=show_trend,
+            noise_variance=noise_variance,
         )
     except Exception:
         logger.exception("Chart generation failed: %s", chart_type)
@@ -201,6 +230,7 @@ def _render_chart_options(
     show_data_labels=True,
     show_variance=False,
     show_trend=False,
+    noise_variance=None,
 ):
     """Render the recommended chart and all available alternatives."""
     picks = [
@@ -233,6 +263,7 @@ def _render_chart_options(
             show_data_labels=show_data_labels,
             show_variance=show_variance,
             show_trend=show_trend,
+            noise_variance=noise_variance,
         )
         if image:
             rendered.append({
@@ -291,6 +322,12 @@ def send_message():
         chart_type_override = request.form.get('chart_type')
         chart_palette_override = request.form.get('chart_palette')
         chart_style_override = request.form.get('chart_style')
+        chart_noise_variance_override = request.form.get('chart_noise_variance', type=float)
+        chart_title_override = request.form.get('chart_title')
+        chart_xlabel_override = request.form.get('chart_xlabel')
+        chart_ylabel_override = request.form.get('chart_ylabel')
+        chart_month_start_override = request.form.get('chart_month_start', type=int)
+        chart_month_end_override = request.form.get('chart_month_end', type=int)
         uploaded_files = [f for f in request.files.getlist('files') if f and f.filename]
     elif request.content_type and 'application/x-www-form-urlencoded' in request.content_type:
         user_message = request.form.get('message', '').strip()
@@ -298,6 +335,12 @@ def send_message():
         chart_type_override = request.form.get('chart_type')
         chart_palette_override = request.form.get('chart_palette')
         chart_style_override = request.form.get('chart_style')
+        chart_noise_variance_override = request.form.get('chart_noise_variance', type=float)
+        chart_title_override = request.form.get('chart_title')
+        chart_xlabel_override = request.form.get('chart_xlabel')
+        chart_ylabel_override = request.form.get('chart_ylabel')
+        chart_month_start_override = request.form.get('chart_month_start', type=int)
+        chart_month_end_override = request.form.get('chart_month_end', type=int)
         uploaded_files = []
     else:
         data = request.get_json(silent=True) or {}
@@ -306,22 +349,13 @@ def send_message():
         chart_type_override = data.get('chart_type')
         chart_palette_override = data.get('chart_palette')
         chart_style_override = data.get('chart_style')
+        chart_noise_variance_override = data.get('chart_noise_variance')
+        chart_title_override = data.get('chart_title')
+        chart_xlabel_override = data.get('chart_xlabel')
+        chart_ylabel_override = data.get('chart_ylabel')
+        chart_month_start_override = data.get('chart_month_start')
+        chart_month_end_override = data.get('chart_month_end')
         uploaded_files = []
-
-    # Chart customization can come from the UI or natural language.
-    raw_chart_config = request.form.get('chart_config') if request.form else None
-    if not raw_chart_config and request.is_json:
-        raw_chart_config = data.get('chart_config') if 'data' in locals() else None
-    try:
-        chart_config = json.loads(raw_chart_config) if raw_chart_config else {}
-        if not isinstance(chart_config, dict):
-            chart_config = {}
-    except (TypeError, ValueError, json.JSONDecodeError):
-        chart_config = {}
-
-    requested_chart_type = (request.form.get('requested_chart_type') if request.form else None)
-    if not requested_chart_type and request.is_json and 'data' in locals():
-        requested_chart_type = data.get('requested_chart_type')
 
     if not user_message and not uploaded_files:
         return jsonify({'error': 'Message cannot be empty'}), 400
@@ -329,25 +363,30 @@ def send_message():
     if not user_message and uploaded_files:
         user_message = 'Please analyze the uploaded file(s) and provide a summary.'
 
-    # Explicit UI settings take precedence over AI recommendations;
-    # natural-language settings fill any gaps.
+    # --- NEW: parse natural-language chart customization from the message
+    # (date range / title / axis renaming — palette & style are already
+    # covered by the dropdown overrides above).
     chart_custom = parse_chart_customization(user_message)
-    # UI period input is converted into the same natural-language parser used
-    # by typed requests, so there is one source of truth for date filtering.
-    if chart_config.get('date_range_text'):
-        ui_range = parse_chart_customization(f"show only {chart_config.get('date_range_text')}")
-        if ui_range.date_range:
-            chart_custom.date_range = ui_range.date_range
-    if chart_config.get('chart_type'):
-        chart_custom.chart_type = chart_config.get('chart_type')
-    if requested_chart_type:
-        chart_custom.chart_type = requested_chart_type
-    for key in ('palette', 'style', 'x_column', 'y_column', 'title', 'xlabel', 'ylabel', 'show_data_labels', 'show_variance', 'show_trend'):
-        if chart_config.get(key) is not None:
-            setattr(chart_custom, key, chart_config.get(key))
-    chart_type_override = chart_custom.chart_type or chart_type_override
-    chart_palette_override = chart_custom.palette or chart_palette_override
-    chart_style_override = chart_custom.style or chart_style_override
+
+    # Explicit dropdown selections always win (same precedence as the
+    # existing title/axis-label overrides above); natural-language
+    # mentions in the typed message ("pie chart", "ey theme", "make it
+    # blue") are the fallback when the user didn't touch the dropdowns.
+    chart_type_override = chart_type_override or chart_custom.chart_type
+    chart_palette_override = chart_palette_override or chart_custom.palette
+    chart_noise_variance = (
+        chart_noise_variance_override
+        if chart_noise_variance_override not in (None, '')
+        else chart_custom.noise_variance
+    )
+    if chart_title_override:
+        chart_custom.title = chart_title_override
+    if chart_xlabel_override:
+        chart_custom.xlabel = chart_xlabel_override
+    if chart_ylabel_override:
+        chart_custom.ylabel = chart_ylabel_override
+    if chart_month_start_override and chart_month_end_override:
+        chart_custom.date_range = (int(chart_month_start_override), int(chart_month_end_override))
 
     if conversation_id:
         conversation = Conversation.query.filter_by(
@@ -518,24 +557,6 @@ def send_message():
             group_col = detect_group_column(df.columns, user_message) \
                 or find_group_column_generic(df, user_message, exclude={month_col, value_col})
 
-            # User-selected X/Y columns are validated against the real dataframe.
-            requested_x = str(chart_custom.x_column).strip() if chart_custom.x_column else None
-            requested_y = str(chart_custom.y_column).strip() if chart_custom.y_column else None
-            if requested_x:
-                requested_x_match = next((c for c in df.columns if str(c).strip().lower() == requested_x.lower()), None)
-                if requested_x_match:
-                    # A non-date X column means a categorical breakdown; route
-                    # it through the category aggregation path below.
-                    if requested_x_match == month_col or pd.api.types.is_datetime64_any_dtype(df[requested_x_match]):
-                        month_col = requested_x_match
-                    else:
-                        group_col = requested_x_match
-                        month_col = None
-            if requested_y:
-                requested_y_match = next((c for c in df.columns if str(c).strip().lower() == requested_y.lower()), None)
-                if requested_y_match:
-                    value_col = requested_y_match
-
             # --- NEW: apply a natural-language date-range filter, if the
             # user asked for one and we have a date column to filter on.
             # Applied to a COPY so downstream deterministic paths (unique
@@ -595,8 +616,9 @@ def send_message():
                             chart_palette_override,
                             chart_style_override,
                             show_data_labels=(chart_custom.show_data_labels is not False),
-                            show_variance=(chart_custom.show_variance is True),
-                            show_trend=(chart_custom.show_trend is True),
+                            show_variance=bool(chart_custom.show_variance),
+                            show_trend=bool(chart_custom.show_trend),
+                            noise_variance=chart_noise_variance,
                         )
                         chart_image = (
                             chart_choices[0]['image'] if chart_choices else None
@@ -643,8 +665,9 @@ def send_message():
                             chart_palette_override,
                             chart_style_override,
                             show_data_labels=(chart_custom.show_data_labels is not False),
-                            show_variance=(chart_custom.show_variance is True),
-                            show_trend=(chart_custom.show_trend is True),
+                            show_variance=bool(chart_custom.show_variance),
+                            show_trend=bool(chart_custom.show_trend),
+                            noise_variance=chart_noise_variance,
                         )
                         chart_image = (
                             chart_choices[0]['image'] if chart_choices else None
@@ -694,8 +717,9 @@ def send_message():
                             chart_palette_override,
                             chart_style_override,
                             show_data_labels=(chart_custom.show_data_labels is not False),
-                            show_variance=(chart_custom.show_variance is True),
-                            show_trend=(chart_custom.show_trend is True),
+                            show_variance=bool(chart_custom.show_variance),
+                            show_trend=bool(chart_custom.show_trend),
+                            noise_variance=chart_noise_variance,
                         )
                         chart_image = (
                             chart_choices[0]['image'] if chart_choices else None
@@ -816,7 +840,6 @@ def send_message():
         'variance_summary': variance_summary,
         'data_profile_warnings': profile_warnings,
         'prompt_intent': intent.category,
-        'chart_config': chart_config or None,
     })
 
 
@@ -841,7 +864,7 @@ def choose_chart():
     if len(labels) > current_app.config.get('CHART_MAX_POINTS', 60):
         return jsonify({'error': 'Too many chart points'}), 400
 
-    palette = str(data.get('palette') or current_app.config.get('CHART_PALETTE', 'viridis'))
+    palette = str(data.get('palette') or current_app.config.get('CHART_PALETTE', 'ey'))
     style = str(data.get('style') or current_app.config.get('CHART_STYLE', 'darkgrid'))
     title = str(data.get('title') or 'Chart')[:200]
     xlabel = str(data.get('xlabel') or '')[:100]
@@ -849,6 +872,8 @@ def choose_chart():
     show_data_labels = bool(data.get('show_data_labels', True))
     show_variance = bool(data.get('show_variance', False))
     show_trend = bool(data.get('show_trend', False))
+    noise_variance = data.get('noise_variance')
+    noise_variance = float(noise_variance) if noise_variance not in (None, '') else None
 
     service = ChartService.from_app_config(current_app.config)
     try:
@@ -863,6 +888,7 @@ def choose_chart():
             show_data_labels=show_data_labels,
             show_variance=show_variance,
             show_trend=show_trend,
+            noise_variance=noise_variance,
         )
     except Exception:
         logger.exception('Selected chart regeneration failed')

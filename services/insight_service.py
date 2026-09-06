@@ -770,3 +770,123 @@ def looks_like_clarifying_reply(response):
         "which column", "please specify", "could you specify",
         "what column", "which metric", "which category",
     ))
+
+
+def analyze_file_query(filepath, file_type, question, ai_service=None, chart_config=None):
+    """
+    One-shot helper for routes/charts.py's standalone `/api/charts/generate`
+    endpoint: load a CSV/Excel file, deterministically figure out what the
+    question is asking for (time-series vs. categorical breakdown vs. a
+    single numeric column), compute it with the same pandas logic
+    /chat/send uses, render it as a chart, and return everything the route
+    needs in one dict.
+
+    Args:
+        filepath: path to the CSV/XLSX/XLS file on disk.
+        file_type: 'csv', 'xlsx', or 'xls'.
+        question: natural-language chart request, e.g. "monthly revenue trend".
+        ai_service: optional AIService instance, passed through to chart
+            type selection for an AI-assisted pick (falls back to the
+            deterministic heuristic if omitted or if the call fails).
+        chart_config: optional dict of ChartService kwargs (style, palette,
+            context, dpi, figsize) to override the defaults.
+
+    Returns:
+        dict: {
+            'chart': base64 PNG data URI,
+            'insights': human-readable text summary of the computed figures,
+            'metric_column': the numeric column that was charted (or None),
+            'group': the column used for the x-axis/grouping (or None),
+            'labels': list of x-axis labels,
+            'values': list of numeric values,
+        }
+
+    Raises:
+        ValueError: if the file can't be read or no chartable data could
+            be found/computed for the question.
+    """
+    df = load_dataframe(filepath, file_type)
+    if df is None or df.empty:
+        raise ValueError("Could not read any data from this file.")
+
+    from services.chart_service import ChartService
+
+    month_col = find_column(df.columns, MONTH_COLUMN_ALIASES) \
+        or find_date_column_generic(df, question)
+    value_col = find_column(df.columns, VALUE_COLUMN_ALIASES) \
+        or find_numeric_column_generic(df, question, exclude=month_col)
+    group_col = detect_group_column(df.columns, question) \
+        or find_group_column_generic(df, question, exclude={month_col, value_col})
+
+    is_time_series = False
+    metric_column = value_col
+    group = None
+    labels, values = [], []
+
+    if month_col and value_col:
+        fiscal_start = 4
+        monthly = monthly_totals(df, month_col, value_col)
+        if not monthly:
+            raise ValueError(
+                f"No valid data found in '{month_col}'/'{value_col}' to chart."
+            )
+        if wants_quarterly_breakdown(question):
+            quarterly = quarterly_totals(df, month_col, value_col, fiscal_start)
+            labels, values = list(quarterly.keys()), list(quarterly.values())
+        else:
+            labels = [name for _, name, _ in monthly]
+            values = [total for _, _, total in monthly]
+        is_time_series = True
+        group = month_col
+
+    elif group_col:
+        operation = requested_aggregation(question)
+        if operation == 'count' or not value_col or value_col == group_col:
+            labels, values = category_counts(df, group_col)
+            metric_column = 'Row count'
+        else:
+            labels, values = category_aggregate(df, group_col, value_col, operation)
+        group = group_col
+
+    elif value_col:
+        series = pd.to_numeric(df[value_col], errors='coerce').dropna()
+        labels = [str(i + 1) for i in range(min(60, len(series)))]
+        values = [float(v) for v in series.iloc[:60]]
+
+    else:
+        raise ValueError(
+            "Could not identify a numeric or categorical column in this "
+            "file to build a chart from."
+        )
+
+    if not labels:
+        raise ValueError("No chartable data could be computed from this file.")
+
+    chart_type, _source = suggest_chart_type(
+        labels, values, is_time_series=is_time_series,
+        ai_service=ai_service, group_label=group,
+    )
+
+    chart_service = ChartService(**chart_config) if chart_config else ChartService()
+    title = f"{metric_column or 'Value'} by {group or 'Category'}"
+    chart_image = chart_service.render_base64(
+        labels, values,
+        chart_type=chart_type,
+        title=title,
+        xlabel=group or '',
+        ylabel=metric_column or '',
+    )
+
+    insights = build_ai_context(
+        categories=(labels, values),
+        category_label=group or metric_column,
+    )
+
+    return {
+        'chart': chart_image,
+        'insights': insights,
+        'metric_column': metric_column,
+        'group': group,
+        'labels': labels,
+        'values': values,
+    }

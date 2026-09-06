@@ -21,10 +21,16 @@ logger = logging.getLogger(__name__)
 VALID_CHART_TYPES = ("bar", "barh", "line", "area", "pie")
 VALID_AGGREGATIONS = ("count", "sum", "mean", "min", "max", "none")
 
+# Kept in sync with services/chart_service.py's BRAND_PALETTES /
+# COLOR_ALIASES: 'ey' is the black/yellow/grey/white brand theme; blue/
+# red/green are the additional single-hue alternatives. Anything mapped
+# to a token here (not a raw matplotlib colormap name) is resolved by
+# ChartService.resolve_palette() at render time.
 COLORS = {
-    "blue": "Blues", "red": "Reds", "green": "Greens", "purple": "Purples",
-    "orange": "Oranges", "yellow": "YlOrBr", "teal": "GnBu",
-    "pink": "RdPu", "brown": "YlOrBr", "gray": "Greys", "grey": "Greys",
+    "blue": "blue", "red": "red", "green": "green",
+    "black": "ey", "yellow": "ey", "grey": "ey", "gray": "ey", "white": "ey",
+    "purple": "Purples", "orange": "Oranges", "teal": "GnBu",
+    "pink": "RdPu", "brown": "YlOrBr",
 }
 STYLES = {
     "dark": "dark", "darkgrid": "darkgrid", "white": "white",

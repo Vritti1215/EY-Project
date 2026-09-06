@@ -31,31 +31,47 @@ import seaborn as sns
 logger = logging.getLogger(__name__)
 
 CHART_TYPES = ('bar', 'barh', 'line', 'area', 'pie')
-CUSTOM_PALETTES = {
-    # EY-style base palette: black / yellow / grey / white.
-    'ey': ['#2E2E38', '#FFE600', '#6B6B76', '#D9D9DE', '#FFFFFF'],
-    'yellow': ['#FFE600', '#E6CF00', '#2E2E38', '#6B6B76'],
-    'black': ['#2E2E38', '#4A4A52', '#6B6B76', '#8A8A92'],
-    'grey': ['#4A4A52', '#6B6B76', '#9A9AA2', '#D9D9DE'],
-    'white': ['#FFFFFF', '#D9D9DE', '#9A9AA2', '#4A4A52'],
-    'blue': ['#2563EB', '#60A5FA', '#1D4ED8', '#93C5FD'],
-    'red': ['#DC2626', '#F87171', '#B91C1C', '#FCA5A5'],
-    'green': ['#16A34A', '#4ADE80', '#15803D', '#86EFAC'],
-    'multi': ['#FFE600', '#2563EB', '#DC2626', '#16A34A', '#2E2E38', '#6B6B76'],
+
+# ---------------------------------------------------------------------------
+# Brand / theme palettes
+# ---------------------------------------------------------------------------
+# EY's brand palette (black, yellow, grey, white) is the primary theme for
+# this app's charts. Named "additional colors" (blue, red, green) are also
+# offered as single-hue alternatives for when a plain colored chart is
+# wanted instead of the brand theme — these map to matplotlib's built-in
+# sequential colormaps rather than a flat single color, so bar/line charts
+# still get a readable light-to-dark gradient across categories.
+#
+# BRAND_PALETTES values are explicit hex lists. seaborn's sns.color_palette()
+# / sns.barplot(palette=...) both cycle a short list of colors across
+# however many categories are being plotted, so a 4-color theme works fine
+# even with more than 4 bars.
+BRAND_PALETTES = {
+    'ey': ['#2E2E38', '#FFE600', '#9DA0A6', '#FFFFFF'],
+    'ey_theme': ['#2E2E38', '#FFE600', '#9DA0A6', '#FFFFFF'],
+    'black_yellow_grey_white': ['#2E2E38', '#FFE600', '#9DA0A6', '#FFFFFF'],
 }
 
-def _palette_values(name, n):
-    key = str(name or '').lower()
-    if key in CUSTOM_PALETTES:
-        base = CUSTOM_PALETTES[key]
-        return [base[i % len(base)] for i in range(max(1, n))]
-    return sns.color_palette(name or 'viridis', max(1, n))
+# Additional single-color options, layered on top of the brand theme.
+# Mapped to matplotlib's built-in sequential colormaps (not a flat color)
+# so multi-category charts still render with visible contrast.
+COLOR_ALIASES = {
+    'blue': 'Blues',
+    'red': 'Reds',
+    'green': 'Greens',
+}
+
+PALETTE_CHOICES = (
+    'ey', 'blue', 'red', 'green',
+    'deep', 'colorblind', 'viridis', 'mako', 'rocket', 'flare', 'crest',
+    'coolwarm', 'pastel', 'bright', 'muted', 'dark',
+)
 
 
 class ChartService:
     """Configurable seaborn/matplotlib chart renderer."""
 
-    def __init__(self, style='darkgrid', palette='viridis', context='notebook',
+    def __init__(self, style='darkgrid', palette='ey', context='notebook',
                  dpi=150, figsize=(10, 6)):
         self.style = style
         self.palette = palette
@@ -68,15 +84,37 @@ class ChartService:
         """Build a ChartService using Flask app config values, with fallbacks."""
         return cls(
             style=config.get('CHART_STYLE', 'darkgrid'),
-            palette=config.get('CHART_PALETTE', 'viridis'),
+            palette=config.get('CHART_PALETTE', 'ey'),
             context=config.get('CHART_CONTEXT', 'notebook'),
             dpi=config.get('CHART_DPI', 150),
             figsize=tuple(config.get('CHART_FIGSIZE', (10, 6))),
         )
 
+    @staticmethod
+    def resolve_palette(name):
+        """
+        Resolve a palette name into whatever seaborn/matplotlib actually
+        expects: a hex color list for brand/theme palettes, a colormap
+        name for the 'blue'/'red'/'green' aliases, or the name unchanged
+        for any regular seaborn/matplotlib palette (viridis, mako, etc.).
+
+        seaborn accepts either form (a list of colors or a colormap name
+        string) anywhere a `palette=` argument is used, so callers don't
+        need to know which kind they got back.
+        """
+        if not name:
+            return None
+        key = str(name).strip().lower()
+        if key in BRAND_PALETTES:
+            return BRAND_PALETTES[key]
+        if key in COLOR_ALIASES:
+            return COLOR_ALIASES[key]
+        return name
+
     def render_png_bytes(self, labels, values, chart_type='bar', title='Chart',
                           xlabel='', ylabel='', palette=None, style=None,
-                          dpi=None, figsize=None, value_format='{:,.0f}', show_data_labels=True, show_variance=False, show_trend=False):
+                          dpi=None, figsize=None, value_format='{:,.0f}', show_data_labels=True, show_variance=False, show_trend=False,
+                          noise_variance=None, noise_seed=None):
         """
         Render a chart to raw PNG bytes.
 
@@ -92,6 +130,16 @@ class ChartService:
             show_data_labels: show values on bars/lines when supported.
             show_variance: show a real-data +/- 1 standard deviation band for line/area.
             show_trend: show a linear trend line for line/area charts.
+            noise_variance: optional fractional variance (e.g. 0.05 for +/-5%)
+                to inject into the plotted values as a spec/tolerance-style
+                perturbation — distinct from show_variance, which only draws
+                a band over the real, unmodified data. When set, each value
+                is jittered by Gaussian noise with std = |value| * noise_variance,
+                and 1-sigma error bars are drawn (bar/line/barh) so the
+                injected tolerance is visible, matching how a "+/-N% spec
+                variance" requirement is usually represented in reports.
+            noise_seed: optional RNG seed so the injected noise is
+                reproducible across re-renders of the same request.
 
         Returns:
             bytes: PNG image data.
@@ -101,17 +149,34 @@ class ChartService:
         if not labels or not values or len(labels) != len(values):
             raise ValueError("labels and values must be non-empty and of equal length.")
 
+        noise_err = None
+        if noise_variance:
+            import numpy as np
+            rng = np.random.default_rng(noise_seed)
+            values = list(values)
+            noise_err = [abs(v) * float(noise_variance) for v in values]
+            values = [v + rng.normal(0, e) if e > 0 else v for v, e in zip(values, noise_err)]
+
         sns.set_style(style or self.style)
         sns.set_context(self.context)
-        active_palette = palette or self.palette
-        palette_values = _palette_values(active_palette, len(labels))
+        active_palette = self.resolve_palette(palette or self.palette)
+        # Materialize to the exact number of categories needed so a short
+        # brand/theme color list (e.g. the 4-color EY palette) cycles
+        # cleanly across any number of bars without seaborn's "palette
+        # has fewer/more values than needed" warning.
+        bar_palette = sns.color_palette(active_palette, max(len(labels), 1))
 
         fig, ax = plt.subplots(figsize=figsize or self.figsize, dpi=dpi or self.dpi)
 
         try:
             if chart_type == 'bar':
                 sns.barplot(x=list(labels), y=list(values), hue=list(labels),
-                            palette=palette_values, legend=False, ax=ax)
+                            palette=bar_palette, legend=False, ax=ax)
+                if noise_err:
+                    ax.errorbar(x=list(range(len(labels))), y=list(values), yerr=noise_err,
+                                fmt='none', ecolor='#2E2E38', elinewidth=1.2, capsize=4, alpha=0.8,
+                                label=f'±{noise_variance*100:.0f}% variance')
+                    ax.legend(fontsize=8)
                 if show_data_labels:
                     for i, v in enumerate(values):
                         ax.text(i, v, value_format.format(v), ha='center', va='bottom', fontsize=9)
@@ -121,14 +186,24 @@ class ChartService:
 
             elif chart_type == 'barh':
                 sns.barplot(y=list(labels), x=list(values), hue=list(labels),
-                            palette=palette_values, legend=False, ax=ax)
+                            palette=bar_palette, legend=False, ax=ax)
+                if noise_err:
+                    ax.errorbar(y=list(range(len(labels))), x=list(values), xerr=noise_err,
+                                fmt='none', ecolor='#2E2E38', elinewidth=1.2, capsize=4, alpha=0.8,
+                                label=f'±{noise_variance*100:.0f}% variance')
+                    ax.legend(fontsize=8)
                 ax.set_xlabel(ylabel)
                 ax.set_ylabel(xlabel)
 
             elif chart_type == 'line':
-                colors = _palette_values(active_palette, 1)
+                colors = sns.color_palette(active_palette, 1)
                 sns.lineplot(x=list(labels), y=list(values), marker='o',
                              color=colors[0], ax=ax)
+                if noise_err:
+                    ax.errorbar(x=list(labels), y=list(values), yerr=noise_err,
+                                fmt='none', ecolor=colors[0], elinewidth=1.2, capsize=4, alpha=0.7,
+                                label=f'±{noise_variance*100:.0f}% variance')
+                    ax.legend(fontsize=8)
                 if show_data_labels:
                     for i, v in enumerate(values):
                         ax.text(i, v, value_format.format(v), ha='center', va='bottom', fontsize=9)
@@ -150,7 +225,7 @@ class ChartService:
                     ax.legend(fontsize=8)
 
             elif chart_type == 'area':
-                colors = _palette_values(active_palette, 1)
+                colors = sns.color_palette(active_palette, 1)
                 x_positions = range(len(labels))
                 ax.fill_between(x_positions, values, alpha=0.4, color=colors[0])
                 ax.plot(x_positions, values, marker='o', color=colors[0])
@@ -177,7 +252,7 @@ class ChartService:
                 plt.setp(ax.get_xticklabels(), rotation=30, ha='right')
 
             elif chart_type == 'pie':
-                colors = _palette_values(active_palette, len(labels))
+                colors = sns.color_palette(active_palette, len(labels))
                 ax.pie(values, labels=labels, autopct='%1.1f%%', colors=colors,
                        startangle=90)
                 ax.axis('equal')

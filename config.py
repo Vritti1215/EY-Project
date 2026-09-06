@@ -46,9 +46,12 @@ class Config:
     # --- Chart / Financial Insight Configuration ---------------------------
     # Seaborn style: darkgrid, whitegrid, dark, white, ticks
     CHART_STYLE = os.environ.get('CHART_STYLE', 'darkgrid')
-    # Any seaborn/matplotlib palette name: viridis, mako, rocket, coolwarm,
-    # Set2, husl, deep, muted, pastel, etc.
-    CHART_PALETTE = os.environ.get('CHART_PALETTE', 'viridis')
+    # 'ey' (black/yellow/grey/white brand theme, default) or 'blue'/'red'/
+    # 'green' (additional single-hue options), or any regular seaborn/
+    # matplotlib palette name: viridis, mako, rocket, coolwarm, Set2,
+    # husl, deep, muted, pastel, etc. See services/chart_service.py's
+    # BRAND_PALETTES / COLOR_ALIASES for the full resolution logic.
+    CHART_PALETTE = os.environ.get('CHART_PALETTE', 'ey')
     # Seaborn context: paper, notebook, talk, poster (controls font/line scale)
     CHART_CONTEXT = os.environ.get('CHART_CONTEXT', 'notebook')
     CHART_DPI = int(os.environ.get('CHART_DPI', 150))

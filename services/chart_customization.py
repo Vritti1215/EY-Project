@@ -53,6 +53,58 @@ _MONTH_WORD = (
     r"aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
 )
 
+# --- Chart type mentioned directly in the message -------------------------
+# Lets a user type "give me a pie chart of Region" instead of having to use
+# the chart-type dropdown. Order matters: 'barh' phrases are checked before
+# 'bar' phrases since "horizontal bar chart" also contains "bar chart".
+_CHART_TYPE_PHRASES = (
+    ('barh', ("horizontal bar", "horizontal bars", "horizontal bar chart")),
+    ('bar', ("bar chart", "bar graph", "bar plot", "bars")),
+    ('line', ("line chart", "line graph", "line plot")),
+    ('area', ("area chart", "area graph", "area plot")),
+    ('pie', ("pie chart", "pie graph", "pie plot")),
+)
+
+# --- Colors / theme mentioned directly in the message ----------------------
+# EY's brand palette (black, yellow, grey, white) is the primary theme for
+# this app — mentioning any one of its colors, or the theme by name, maps
+# to the full 4-color 'ey' palette (see services/chart_service.py). Blue,
+# red, and green are additional single-hue alternatives for a plain
+# colored chart instead of the brand theme.
+_THEME_PALETTE_PHRASES = (
+    "ey theme", "ey colors", "ey colours", "ey brand", "ey palette",
+    "brand colors", "brand colours", "brand theme", "brand palette",
+    "corporate colors", "corporate colours", "corporate theme",
+    "black yellow grey white", "black, yellow, grey, white",
+    "black and yellow", "black yellow and grey",
+)
+_SINGLE_COLOR_TO_PALETTE = {
+    "blue": "blue",
+    "red": "red",
+    "green": "green",
+    "black": "ey",
+    "yellow": "ey",
+    "grey": "ey",
+    "gray": "ey",
+    "white": "ey",
+}
+
+
+def _parse_chart_type(q: str) -> Optional[str]:
+    for chart_type, phrases in _CHART_TYPE_PHRASES:
+        if any(p in q for p in phrases):
+            return chart_type
+    return None
+
+
+def _parse_palette(q: str) -> Optional[str]:
+    if any(phrase in q for phrase in _THEME_PALETTE_PHRASES):
+        return "ey"
+    for word, palette in _SINGLE_COLOR_TO_PALETTE.items():
+        if re.search(rf"\b{word}\b", q):
+            return palette
+    return None
+
 
 @dataclass
 class ChartCustomization:
@@ -61,60 +113,12 @@ class ChartCustomization:
     ylabel: Optional[str] = None
     date_range: Optional[tuple] = None  # (start_month:int, end_month:int)
     show_data_labels: Optional[bool] = None
-    chart_type: Optional[str] = None
-    palette: Optional[str] = None
-    style: Optional[str] = None
-    x_column: Optional[str] = None
-    y_column: Optional[str] = None
-    show_variance: Optional[bool] = None
-    show_trend: Optional[bool] = None
+    chart_type: Optional[str] = None  # 'bar' | 'barh' | 'line' | 'area' | 'pie'
+    palette: Optional[str] = None  # 'ey' | 'blue' | 'red' | 'green' | ...
+    show_variance: Optional[bool] = None  # ±1 SD band (line/area only)
+    show_trend: Optional[bool] = None  # linear trend line (line/area only)
+    noise_variance: Optional[float] = None  # injected +/-N% spec-tolerance noise
 
-
-
-_VALID_CHART_TYPES = {"bar", "barh", "line", "area", "pie"}
-
-
-def _parse_chart_type(q: str) -> Optional[str]:
-    rules = [
-        ("barh", r"\b(?:horizontal\s+bar|barh)\b"),
-        ("bar", r"\b(?:bar\s+chart|bar\s+graph|bar)\b"),
-        ("line", r"\b(?:line\s+chart|line\s+graph|line\s+plot)\b"),
-        ("area", r"\b(?:area\s+chart|area\s+graph)\b"),
-        ("pie", r"\b(?:pie\s+chart|pie\s+graph|donut\s+chart|donut)\b"),
-    ]
-    for chart_type, pattern in rules:
-        if re.search(pattern, q):
-            return chart_type
-    return None
-
-
-def _parse_palette(q: str) -> Optional[str]:
-    if re.search(r"\b(?:ey|yellow|black|grey|gray|white)\s*(?:theme|palette|colour|color)?\b", q):
-        return "ey"
-    for name in ("blue", "red", "green", "multi", "multicolor", "colorblind", "viridis", "mako", "rocket", "flare", "crest", "coolwarm", "pastel", "bright", "muted", "dark", "deep"):
-        if re.search(rf"\b{name}\b", q):
-            return "multi" if name == "multicolor" else name
-    return None
-
-
-def _parse_style(q: str) -> Optional[str]:
-    for name in ("darkgrid", "whitegrid", "white", "dark", "ticks"):
-        if re.search(rf"\b{name}\b", q):
-            return name
-    return None
-
-
-def _parse_column(q: str, axis: str) -> Optional[str]:
-    m = re.search(rf"(?:{axis}[- ]?axis|{axis})\s+(?:column|field)?\s*(?:to|as|from|use)\s+[\"']?([^,\"']+?)[\"']?(?:\s+(?:and|with|show|using)\b|$)", q)
-    return m.group(1).strip() if m else None
-
-
-def _parse_toggle(q: str, yes_patterns, no_patterns) -> Optional[bool]:
-    if any(re.search(p, q) for p in yes_patterns):
-        return True
-    if any(re.search(p, q) for p in no_patterns):
-        return False
-    return None
 
 def _parse_axis_rename(q: str) -> tuple:
     xlabel = ylabel = None
@@ -171,6 +175,49 @@ def _parse_data_labels(q: str) -> Optional[bool]:
     return None
 
 
+def _parse_show_variance(q: str) -> Optional[bool]:
+    """'show variance', 'with the standard deviation band', '±1 sd' -> True."""
+    if any(p in q for p in (
+        "show variance", "with variance", "variance band",
+        "standard deviation", "std dev", "±1 sd", "show the spread",
+    )):
+        return True
+    if any(p in q for p in ("without variance", "no variance", "hide variance")):
+        return False
+    return None
+
+
+def _parse_show_trend(q: str) -> Optional[bool]:
+    """'show trend', 'add a trend line', 'trendline' -> True."""
+    if any(p in q for p in ("show trend", "with trend", "trend line", "trendline", "add a trend")):
+        return True
+    if any(p in q for p in ("without trend", "no trend", "hide trend")):
+        return False
+    return None
+
+
+def _parse_noise_variance(q: str) -> Optional[float]:
+    """
+    'add 5% noise variance', 'noise variance of 10%', 'apply ±3% variance',
+    'with noise' -> fractional variance (e.g. 0.05). This injects jitter
+    into the plotted values themselves (see chart_service.render_png_bytes),
+    unlike show_variance which only bands the real, unmodified data —
+    useful for the "+/-N% spec/tolerance" style requirement common in
+    company financial/engineering report templates.
+    """
+    m = re.search(r"(?:noise\s+variance|variance\s+noise)\s*(?:of|:)?\s*\D*(\d+(?:\.\d+)?)\s*%", q)
+    if m:
+        return float(m.group(1)) / 100.0
+    m = re.search(r"(?:±|\+/-|\+-)\s*(\d+(?:\.\d+)?)\s*%\s*(?:noise|variance)", q)
+    if m:
+        return float(m.group(1)) / 100.0
+    if re.search(r"\bnoise\s+variance\b|\badd\s+noise\b|\bwith\s+noise\b|\bapply\s+noise\b", q):
+        return 0.05  # sensible default when no explicit percentage is given
+    if re.search(r"\bno\s+noise\b|\bwithout\s+noise\b|\bremove\s+noise\b", q):
+        return 0.0
+    return None
+
+
 def parse_chart_customization(message: str) -> ChartCustomization:
     """Deterministic — no LLM round-trip needed for this structured a parse."""
     q = (message or "").lower()
@@ -183,17 +230,9 @@ def parse_chart_customization(message: str) -> ChartCustomization:
         show_data_labels=_parse_data_labels(q),
         chart_type=_parse_chart_type(q),
         palette=_parse_palette(q),
-        style=_parse_style(q),
-        x_column=_parse_column(q, "x"),
-        y_column=_parse_column(q, "y"),
-        show_variance=_parse_toggle(
-            q, [r"\bshow\s+(?:variance|variation)\b", r"\badd\s+(?:variance|variation)\b"],
-            [r"\bhide\s+(?:variance|variation)\b", r"\bwithout\s+(?:variance|variation)\b"],
-        ),
-        show_trend=_parse_toggle(
-            q, [r"\bshow\s+(?:trend|trend\s+line)\b", r"\badd\s+(?:trend|trend\s+line)\b"],
-            [r"\bhide\s+(?:trend|trend\s+line)\b", r"\bwithout\s+(?:trend|trend\s+line)\b"],
-        ),
+        show_variance=_parse_show_variance(q),
+        show_trend=_parse_show_trend(q),
+        noise_variance=_parse_noise_variance(q),
     )
 
 

@@ -332,42 +332,75 @@ def quarterly_totals(df, month_col, value_col, fiscal_start_month=4):
     return {q: quarters[q] for q in ordered}
 
 
+def _standardize_category_label(series):
+    """
+    Collapse case/whitespace variants of the same category ('North',
+    'NORTH', ' north ') into one canonical group, while keeping a clean,
+    consistently-cased label for display. Real spreadsheet exports are
+    rarely case-consistent, so every grouping helper below normalizes on
+    this before aggregating — otherwise 'North'/'NORTH'/'north' silently
+    split into separate rows instead of being combined into one, which is
+    the exact mismatch that used to force a manual "standardize first"
+    workaround instead of a direct answer.
+    """
+    cleaned = series.astype(str).str.strip()
+    cleaned = cleaned[cleaned != '']
+    key = cleaned.str.casefold()
+    # Use the most common raw casing per key as the display label, so
+    # 'North' is shown as 'North' rather than an all-caps/all-lower form.
+    display_map = (
+        cleaned.groupby(key)
+        .agg(lambda s: s.value_counts().idxmax())
+    )
+    return cleaned, key, display_map
+
+
 def category_counts(df, group_col):
     """
     Count occurrences of each distinct value in a categorical column —
     e.g. "number of students assigned to each venue" is exactly a row
-    count per distinct Venue value.
+    count per distinct Venue value. Case/whitespace variants of the same
+    value (e.g. "North" / "NORTH") are treated as one category.
     """
-    series = df[group_col].dropna().astype(str).str.strip()
-    series = series[series != '']
-    counts = series.value_counts().sort_index()
-    return list(counts.index), [int(v) for v in counts.values]
+    cleaned, key, display_map = _standardize_category_label(df[group_col].dropna())
+    if cleaned.empty:
+        return [], []
+    counts = key.value_counts().sort_index()
+    labels = [display_map[k] for k in counts.index]
+    return labels, [int(v) for v in counts.values]
 
 
 def category_sums(df, group_col, value_col):
-    """Sum a numeric column grouped by a categorical column."""
+    """Sum a numeric column grouped by a categorical column. Case/
+    whitespace variants of the same category are combined (see
+    _standardize_category_label)."""
     work = df[[group_col, value_col]].copy()
     work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
-    work[group_col] = work[group_col].astype(str).str.strip()
-    work = work.dropna(subset=[value_col])
-    work = work[work[group_col] != '']
+    work = work.dropna(subset=[value_col, group_col])
+    cleaned, key, display_map = _standardize_category_label(work[group_col])
+    work = work.loc[cleaned.index]
+    work['_group_key'] = key
     if work.empty:
         return [], []
-    grouped = work.groupby(group_col)[value_col].sum().sort_index()
-    return list(grouped.index), [float(v) for v in grouped.values]
+    grouped = work.groupby('_group_key')[value_col].sum().sort_index()
+    labels = [display_map[k] for k in grouped.index]
+    return labels, [float(v) for v in grouped.values]
 
 
 def category_aggregate(df, group_col, value_col, operation='sum'):
-    """Aggregate a numeric column by category deterministically."""
+    """Aggregate a numeric column by category deterministically. Case/
+    whitespace variants of the same category are combined (see
+    _standardize_category_label)."""
     work = df[[group_col, value_col]].copy()
     work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
-    work[group_col] = work[group_col].astype(str).str.strip()
-    work = work.dropna(subset=[value_col])
-    work = work[work[group_col] != '']
+    work = work.dropna(subset=[value_col, group_col])
+    cleaned, key, display_map = _standardize_category_label(work[group_col])
+    work = work.loc[cleaned.index]
+    work['_group_key'] = key
     if work.empty:
         return [], []
 
-    grouped = work.groupby(group_col)[value_col]
+    grouped = work.groupby('_group_key')[value_col]
     if operation == 'mean':
         result = grouped.mean()
     elif operation == 'min':
@@ -380,7 +413,8 @@ def category_aggregate(df, group_col, value_col, operation='sum'):
         result = grouped.sum()
 
     result = result.sort_index()
-    return list(result.index), [float(v) for v in result.values]
+    labels = [display_map[k] for k in result.index]
+    return labels, [float(v) for v in result.values]
 
 
 def requested_aggregation(message):

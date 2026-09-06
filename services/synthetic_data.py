@@ -1,20 +1,20 @@
 """
 Synthetic Test Data Generator
 ================================
-PENDING item: "Add variance, noise, and realistic imperfections to
+DONE item: "Add variance, noise, and realistic imperfections to
 synthetic test datasets."
 
-Your table notes the Test_Venue workbook was tested against the full
-3,400 rows — but it's clean data. This generates messier datasets to
-stress-test the column-detection (schema_service) and validation
-(data_profile_service) work: inconsistent date formats, mixed casing,
-outliers, missing values, and duplicate rows.
-
-Drop into tests/synthetic_data.py (or services/ if you want to reuse it
-outside tests, e.g. for demoing the upload flow).
+Previously this only added random per-row noise (a flat Gaussian around
+one mean) plus formatting messiness (mixed date formats/casing, missing
+values, duplicates). That's enough to stress-test column detection, but
+it doesn't look like real business data, which has *structure* in its
+variance: seasonality, a growth/decline trend, weekday effects, regional
+and product-level differences, occasional refunds, and outliers that are
+plausible one-off events rather than pure noise. This version adds that
+layer while keeping all the original messiness.
 
 Usage:
-    from tests.synthetic_data import generate_messy_sales_data
+    from services.synthetic_data import generate_messy_sales_data
     df = generate_messy_sales_data(rows=500, seed=42)
     df.to_excel('messy_sales_test.xlsx', index=False)
 
@@ -40,6 +40,27 @@ DATE_FORMATS = [
 
 CATEGORY_CASE_VARIANTS = lambda s: random.choice([s.upper(), s.lower(), s.title(), s])
 
+# --- Realistic business-pattern parameters -----------------------------
+# Monthly seasonality multiplier (Jan..Dec): slow start, summer dip,
+# a Nov/Dec holiday surge — a common retail/B2B pattern.
+MONTH_SEASONALITY = [0.85, 0.88, 0.95, 1.00, 1.02, 0.90,
+                      0.85, 0.92, 1.00, 1.08, 1.20, 1.35]
+
+# Weekday multiplier (Mon..Sun) — weekends noticeably quieter for a
+# B2B-style sales dataset.
+WEEKDAY_SEASONALITY = [1.05, 1.08, 1.10, 1.05, 1.00, 0.55, 0.45]
+
+# Region-level baseline differences (some regions just run bigger orders).
+REGION_BASELINE = {
+    "North": 1.15, "South": 0.90, "East": 1.00, "West": 1.25, "Central": 0.80,
+}
+
+# Product-level baseline differences.
+PRODUCT_BASELINE = {
+    "Widget A": 0.70, "Widget B": 0.85, "Gadget X": 1.20,
+    "Gadget Y": 1.05, "Component Z": 1.60,
+}
+
 
 def _random_date_string(base_date: datetime) -> str:
     fmt = random.choice(DATE_FORMATS)
@@ -58,14 +79,31 @@ def generate_messy_sales_data(
     duplicate_rate: float = 0.02,
     inconsistent_date_format_rate: float = 0.4,
     mixed_case_rate: float = 0.5,
+    refund_rate: float = 0.03,
+    annual_growth: float = 0.18,
 ) -> pd.DataFrame:
     """
-    Generate a synthetic sales dataset with realistic imperfections:
+    Generate a synthetic sales dataset with realistic imperfections AND
+    realistic business patterns:
 
-    - date column with mixed formats (not all ISO) — stresses
-      schema_service._looks_like_datetime()'s pattern+parse thresholds
+    Business patterns (the "signal" a real dataset would have):
+    - annual growth trend: later orders trend ~`annual_growth` higher
+      than earlier ones (default +18% end-of-year vs start).
+    - monthly seasonality: a Nov/Dec holiday surge and a summer dip
+      (MONTH_SEASONALITY), not a flat average all year.
+    - weekday effect: weekend orders are smaller/rarer (WEEKDAY_SEASONALITY).
+    - region- and product-level baselines: e.g. "West" and "Component Z"
+      run bigger tickets than "Central"/"Widget A" — not every category
+      centered on the same mean.
+    - occasional refunds/returns: a small fraction of rows are negative
+      Amount values, as real transaction exports usually have.
+
+    Messiness (imperfections that stress column-detection/validation):
+    - date column with mixed formats (not all ISO)
     - category column with inconsistent casing ('north', 'North', 'NORTH')
-    - numeric column with occasional outliers (order-of-magnitude spikes)
+    - numeric column with occasional outliers (plausible one-off bulk
+      orders layered on top of the business pattern above, not pure
+      random noise floating free of it)
     - random missing values (NaN) sprinkled across columns
     - a small percentage of exact duplicate rows
     - an identifier column (Order ID) to test is_id_like() exclusion logic
@@ -79,6 +117,9 @@ def generate_messy_sales_data(
         inconsistent_date_format_rate: fraction of dates using a
             non-ISO format.
         mixed_case_rate: fraction of category values with randomized case.
+        refund_rate: fraction of rows turned into negative-amount refunds.
+        annual_growth: fractional growth from Jan 1 to Dec 31 (a linear
+            trend layered under the seasonality/noise).
 
     Returns:
         pandas.DataFrame
@@ -87,14 +128,15 @@ def generate_messy_sales_data(
         random.seed(seed)
         np.random.seed(seed)
 
-    regions = ["North", "South", "East", "West", "Central"]
-    products = ["Widget A", "Widget B", "Gadget X", "Gadget Y", "Component Z"]
+    regions = list(REGION_BASELINE.keys())
+    products = list(PRODUCT_BASELINE.keys())
 
     base_date = datetime(2025, 1, 1)
     records = []
 
     for i in range(rows):
-        order_date = base_date + timedelta(days=random.randint(0, 364))
+        day_offset = random.randint(0, 364)
+        order_date = base_date + timedelta(days=day_offset)
         date_str = (
             _random_date_string(order_date)
             if random.random() < inconsistent_date_format_rate
@@ -102,17 +144,34 @@ def generate_messy_sales_data(
         )
 
         region = random.choice(regions)
+        region_factor = REGION_BASELINE[region]
         if random.random() < mixed_case_rate:
             region = CATEGORY_CASE_VARIANTS(region)
 
         product = random.choice(products)
-        base_amount = round(np.random.normal(loc=500, scale=150), 2)
+        product_factor = PRODUCT_BASELINE[product]
+
+        # Business pattern: trend + seasonality + weekday effect, all
+        # multiplied together before the per-order random noise is added
+        # — this is what makes the series look like a real business
+        # rather than samples drawn from one flat distribution.
+        trend_factor = 1.0 + annual_growth * (day_offset / 364.0)
+        month_factor = MONTH_SEASONALITY[order_date.month - 1]
+        weekday_factor = WEEKDAY_SEASONALITY[order_date.weekday()]
+
+        combined_factor = region_factor * product_factor * trend_factor * month_factor * weekday_factor
+        base_amount = round(np.random.normal(loc=500, scale=90) * combined_factor, 2)
         base_amount = max(base_amount, 5.0)
 
         if random.random() < outlier_rate:
+            # A plausible one-off bulk order/spike, layered on the
+            # already-patterned amount rather than replacing it outright.
             base_amount = _inject_outlier(base_amount, magnitude=random.uniform(6, 12))
+        elif random.random() < refund_rate:
+            # A refund/return: a real transaction export usually has some.
+            base_amount = -round(base_amount * random.uniform(0.2, 1.0), 2)
 
-        quantity = max(1, int(np.random.poisson(lam=4)))
+        quantity = max(1, int(np.random.poisson(lam=4 * region_factor)))
 
         records.append({
             "Order ID": f"ORD-{100000 + i}",

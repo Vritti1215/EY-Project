@@ -566,12 +566,23 @@ def send_message():
             if chart_custom.date_range and month_col:
                 df = apply_month_range_filter(df, month_col, chart_custom.date_range)
 
+            # An EXPLICIT column mention (e.g. "...by region", "...per
+            # product") is a much stronger, deterministic signal than the
+            # loose financial-keyword heuristic below — it must win even
+            # when the question also contains a word like "revenue" or
+            # "amount" that would otherwise misroute this into the
+            # monthly/time-series branch. Without this, "total revenue by
+            # region" was being treated as a time-series request (because
+            # of the word "revenue"), producing no usable result and
+            # leaving the AI with no real numbers to answer from.
+            explicit_group_match = detect_group_column(df.columns, user_message) is not None
+
             message_lower = user_message.lower()
             time_series_request = any(keyword in message_lower for keyword in (
                 'sales', 'revenue', 'income', 'profit', 'expense',
                 'amount', 'financial', 'month', 'monthly', 'quarter',
                 'q1', 'q2', 'q3', 'q4', 'qtr', 'date', 'period'
-            ))
+            )) and not explicit_group_match
 
             if computed_context is None and group_col and not time_series_request:
                 operation = requested_aggregation(user_message)

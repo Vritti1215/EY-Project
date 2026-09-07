@@ -7,10 +7,141 @@ formats including PDF, DOCX, and TXT files for user download.
 
 import os
 import io
+import re
+import base64
 import logging
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+def _inline_markdown_to_html(text):
+    """
+    Convert the small subset of markdown the AI actually produces
+    (**bold**, *italic*, `code`) into the limited HTML-like tags
+    reportlab's Paragraph understands, after escaping XML special chars.
+    Anything else is left as plain text rather than guessed at.
+    """
+    text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'(?<!\*)\*([^*\n]+?)\*(?!\*)', r'<i>\1</i>', text)
+    text = re.sub(r'`([^`\n]+?)`', r'<font face="Courier">\1</font>', text)
+    return text
+
+
+def _get_chart_image(msg):
+    """Read the chart_image field off either a ChatHistory object or a dict."""
+    if hasattr(msg, 'chart_image'):
+        return getattr(msg, 'chart_image', None)
+    if isinstance(msg, dict):
+        return msg.get('chart_image')
+    return None
+
+
+def _response_to_pdf_flowables(response_text, chart_image_data_uri, ai_style, styles):
+    """
+    Turn one AI response (markdown-ish text, possibly containing a
+    pipe table and/or an embedded "![alt](attachment://...)" chart
+    reference) into real reportlab flowables instead of dumping the raw
+    markdown as literal text: plain paragraphs with real bold/italic,
+    an actual reportlab Table for any markdown table, and the real
+    chart image (decoded from the message's stored chart_image base64
+    data) instead of the broken-looking markdown image link.
+    """
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle, Image as RLImage
+    from reportlab.lib.colors import HexColor
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.units import inch
+
+    flowables = []
+    lines = (response_text or '').replace('\r\n', '\n').split('\n')
+    paragraph_buffer = []
+
+    def flush_paragraph():
+        if paragraph_buffer:
+            text = ' '.join(paragraph_buffer).strip()
+            if text:
+                flowables.append(Paragraph(_inline_markdown_to_html(text), ai_style))
+                flowables.append(Spacer(1, 4))
+            paragraph_buffer.clear()
+
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+
+        # A markdown image reference ("![Revenue Trend](attachment://x.png)")
+        # is not real content once we embed the actual chart below — drop
+        # the broken-looking raw markdown line entirely instead of
+        # printing it as literal text.
+        if re.match(r'^!\[.*?\]\([^)]*\)$', stripped):
+            flush_paragraph()
+            i += 1
+            continue
+
+        # Markdown table: a "|...|" header row followed by a "|---|---|"
+        # separator row.
+        if stripped.startswith('|') and i + 1 < len(lines) and re.match(r'^\|[\s:|-]+\|?$', lines[i + 1].strip()):
+            flush_paragraph()
+            header = [c.strip() for c in stripped.strip('|').split('|')]
+            table_rows = [header]
+            i += 2  # skip the "|---|---|" separator line
+            while i < len(lines) and lines[i].strip().startswith('|'):
+                row = [c.strip() for c in lines[i].strip().strip('|').split('|')]
+                # Pad/truncate ragged rows so reportlab doesn't choke on
+                # a row with a different column count than the header.
+                if len(row) < len(header):
+                    row += [''] * (len(header) - len(row))
+                elif len(row) > len(header):
+                    row = row[:len(header)]
+                table_rows.append(row)
+                i += 1
+            cell_style = ParagraphStyle('TableCell', parent=styles['Normal'], fontSize=8, leading=10)
+            wrapped_rows = [
+                [Paragraph(_inline_markdown_to_html(c), cell_style) for c in row]
+                for row in table_rows
+            ]
+            table = Table(wrapped_rows, hAlign='LEFT')
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#f3f4f6')),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, HexColor('#d1d5db')),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 4),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ]))
+            flowables.append(table)
+            flowables.append(Spacer(1, 8))
+            continue
+
+        if stripped == '':
+            flush_paragraph()
+            i += 1
+            continue
+
+        paragraph_buffer.append(stripped)
+        i += 1
+
+    flush_paragraph()
+
+    if chart_image_data_uri and isinstance(chart_image_data_uri, str) and ',' in chart_image_data_uri:
+        try:
+            _, b64data = chart_image_data_uri.split(',', 1)
+            img_bytes = base64.b64decode(b64data)
+            img = RLImage(io.BytesIO(img_bytes))
+            # Fit to page width, preserving aspect ratio.
+            max_width = 6.0 * inch
+            if img.imageWidth > max_width:
+                scale = max_width / float(img.imageWidth)
+                img.drawWidth = img.imageWidth * scale
+                img.drawHeight = img.imageHeight * scale
+            flowables.append(Spacer(1, 6))
+            flowables.append(img)
+            flowables.append(Spacer(1, 10))
+        except Exception:
+            logger.warning("Could not embed chart image in PDF export", exc_info=True)
+
+    return flowables
 
 
 def export_chat_to_txt(messages, conversation_title="Chat Export"):
@@ -48,6 +179,93 @@ def export_chat_to_txt(messages, conversation_title="Chat Export"):
     buffer.write(content.encode('utf-8'))
     buffer.seek(0)
     return buffer
+
+
+def _response_to_docx_blocks(doc, response_text, chart_image_data_uri):
+    """
+    Same idea as _response_to_pdf_flowables but writing directly into a
+    python-docx Document: real bold runs instead of literal '**text**',
+    an actual docx table for a markdown table, the real chart image
+    instead of the broken "![...](attachment://...)" markdown line.
+    """
+    from docx.shared import Pt, Inches
+
+    def add_markdown_paragraph(text):
+        p = doc.add_paragraph()
+        # Split on **bold** segments, alternating plain/bold runs.
+        parts = re.split(r'\*\*(.+?)\*\*', text)
+        for idx, part in enumerate(parts):
+            if not part:
+                continue
+            run = p.add_run(part)
+            run.font.size = Pt(10)
+            run.font.bold = (idx % 2 == 1)
+        p.style.font.size = Pt(10)
+        return p
+
+    lines = (response_text or '').replace('\r\n', '\n').split('\n')
+    paragraph_buffer = []
+
+    def flush_paragraph():
+        if paragraph_buffer:
+            text = ' '.join(paragraph_buffer).strip()
+            if text:
+                add_markdown_paragraph(text)
+            paragraph_buffer.clear()
+
+    i = 0
+    while i < len(lines):
+        stripped = lines[i].strip()
+
+        if re.match(r'^!\[.*?\]\([^)]*\)$', stripped):
+            flush_paragraph()
+            i += 1
+            continue
+
+        if stripped.startswith('|') and i + 1 < len(lines) and re.match(r'^\|[\s:|-]+\|?$', lines[i + 1].strip()):
+            flush_paragraph()
+            header = [c.strip() for c in stripped.strip('|').split('|')]
+            table_rows = [header]
+            i += 2
+            while i < len(lines) and lines[i].strip().startswith('|'):
+                row = [c.strip() for c in lines[i].strip().strip('|').split('|')]
+                if len(row) < len(header):
+                    row += [''] * (len(header) - len(row))
+                elif len(row) > len(header):
+                    row = row[:len(header)]
+                table_rows.append(row)
+                i += 1
+            table = doc.add_table(rows=len(table_rows), cols=len(header))
+            table.style = 'Light Grid Accent 1'
+            for r, row in enumerate(table_rows):
+                for c, val in enumerate(row):
+                    cell = table.cell(r, c)
+                    cell.text = val
+                    for p in cell.paragraphs:
+                        for run in p.runs:
+                            run.font.size = Pt(9)
+                            if r == 0:
+                                run.font.bold = True
+            doc.add_paragraph()
+            continue
+
+        if stripped == '':
+            flush_paragraph()
+            i += 1
+            continue
+
+        paragraph_buffer.append(stripped)
+        i += 1
+
+    flush_paragraph()
+
+    if chart_image_data_uri and isinstance(chart_image_data_uri, str) and ',' in chart_image_data_uri:
+        try:
+            _, b64data = chart_image_data_uri.split(',', 1)
+            img_bytes = base64.b64decode(b64data)
+            doc.add_picture(io.BytesIO(img_bytes), width=Inches(6))
+        except Exception:
+            logger.warning("Could not embed chart image in DOCX export", exc_info=True)
 
 
 def export_chat_to_docx(messages, conversation_title="Chat Export"):
@@ -116,8 +334,7 @@ def export_chat_to_docx(messages, conversation_title="Chat Export"):
             run.font.size = Pt(11)
             run.font.color.rgb = RGBColor(16, 185, 129)
 
-            ai_msg = doc.add_paragraph(response)
-            ai_msg.style.font.size = Pt(10)
+            _response_to_docx_blocks(doc, response, _get_chart_image(msg))
 
             doc.add_paragraph('—' * 40)
 
@@ -213,15 +430,21 @@ def export_chat_to_pdf(messages, conversation_title="Chat Export"):
                 response = msg.get('response', '')
                 timestamp = msg.get('timestamp', 'N/A')
 
-            # Escape XML special characters for reportlab
-            prompt = prompt.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            response = response.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            chart_image_data_uri = _get_chart_image(msg)
+
+            # Escape XML special characters for reportlab (the prompt is
+            # plain user text, no markdown formatting to convert).
+            prompt = (prompt or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
             story.append(Paragraph(f'User [{timestamp}]:', label_style))
             story.append(Paragraph(prompt, user_style))
             story.append(Spacer(1, 6))
             story.append(Paragraph(f'AI Assistant [{timestamp}]:', label_style))
-            story.append(Paragraph(response, ai_style))
+            # Render the response as real paragraphs/tables/image instead
+            # of dumping raw markdown (bold markers, pipe tables, and a
+            # broken "![...](attachment://...)" image reference) as
+            # literal text.
+            story.extend(_response_to_pdf_flowables(response, chart_image_data_uri, ai_style, styles))
             story.append(Spacer(1, 16))
 
         doc.build(story)

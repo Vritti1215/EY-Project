@@ -47,17 +47,26 @@ CHART_TYPES = ('bar', 'barh', 'line', 'area', 'pie')
 # however many categories are being plotted, so a 4-color theme works fine
 # even with more than 4 bars.
 BRAND_PALETTES = {
-    'ey': ['#2E2E38', '#FFE600', '#9DA0A6', '#FFFFFF'],
-    'ey_theme': ['#2E2E38', '#FFE600', '#9DA0A6', '#FFFFFF'],
-    'black_yellow_grey_white': ['#2E2E38', '#FFE600', '#9DA0A6', '#FFFFFF'],
+    # Default theme: black, grey, yellow, and blue(cyan) — NOT literal
+    # white. A flat white bar/slice is invisible against the default
+    # white chart background, so it's swapped for a blue/cyan accent
+    # here. This is what's used automatically whenever the user hasn't
+    # named a specific color/palette; an explicit request (e.g. "make it
+    # white", "background white") is handled separately via
+    # background_color/series_color in render_png_bytes and always wins.
+    'ey': ['#2E2E38', '#9DA0A6', '#FFE600', '#06B6D4'],
+    'ey_theme': ['#2E2E38', '#9DA0A6', '#FFE600', '#06B6D4'],
+    'black_yellow_grey_white': ['#2E2E38', '#9DA0A6', '#FFE600', '#06B6D4'],
 }
 
-# Solid hex versions of the "additional colors", used (in this exact order)
-# to auto-extend the brand palette once a chart has more categories than
-# the brand palette has colors — e.g. a 7-slice pie automatically gets the
-# 4 brand colors PLUS blue/red/green rather than repeating black/yellow/
-# grey/white twice. Order matters: blue first, then red, then green.
-EXTRA_BRAND_COLORS = ['#2563EB', '#DC2626', '#16A34A']  # blue, red, green
+# NOTE: the brand/theme palette is intentionally NEVER auto-extended with
+# extra colors (e.g. red/green/purple) just because a chart has more
+# categories than the palette has colors. The default EY theme always
+# stays exactly the 4 brand colors (black, grey, yellow, cyan), cycling
+# back to the start for any additional bars/slices. Extra colors only
+# ever appear when the user explicitly asks for them (e.g. "make it
+# red", "use blue too") via series_color/palette overrides — see
+# _parse_element_color / _parse_palette in chart_customization.py.
 
 # Additional single-color options, layered on top of the brand theme.
 # Mapped to matplotlib's built-in sequential colormaps (not a flat color)
@@ -77,20 +86,17 @@ PALETTE_CHOICES = (
 
 def _brand_palette_for_count(base_colors, n_categories):
     """
-    Auto-extend a brand palette to fit the number of bars/slices being
-    drawn: use the brand colors as-is while there are enough of them, and
-    once n_categories exceeds that, append the additional blue/red/green
-    colors (in that order) before falling back to cycling from the start.
-    This only applies to the brand/theme palette — an explicitly chosen
-    single color (blue/red/green/etc.) is never auto-mixed with others.
+    Fit the brand palette to the number of bars/slices being drawn by
+    cycling the 4 brand colors — the default EY theme never gains extra
+    colors (red/green/purple etc.) just because a chart has more
+    categories than the palette has colors; category 5 simply repeats
+    color 1 (black), category 6 repeats color 2 (grey), and so on. This
+    only applies to the brand/theme palette — an explicitly chosen single
+    color (blue/red/green/etc.) is never auto-mixed with others.
     """
     if n_categories <= len(base_colors):
         return base_colors
-    extended = list(base_colors) + EXTRA_BRAND_COLORS
-    if n_categories <= len(extended):
-        return extended
-    # Still more categories than brand + extras: cycle the extended list.
-    return [extended[i % len(extended)] for i in range(n_categories)]
+    return [base_colors[i % len(base_colors)] for i in range(n_categories)]
 
 
 class ChartService:

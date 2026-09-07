@@ -52,6 +52,13 @@ BRAND_PALETTES = {
     'black_yellow_grey_white': ['#2E2E38', '#FFE600', '#9DA0A6', '#FFFFFF'],
 }
 
+# Solid hex versions of the "additional colors", used (in this exact order)
+# to auto-extend the brand palette once a chart has more categories than
+# the brand palette has colors — e.g. a 7-slice pie automatically gets the
+# 4 brand colors PLUS blue/red/green rather than repeating black/yellow/
+# grey/white twice. Order matters: blue first, then red, then green.
+EXTRA_BRAND_COLORS = ['#2563EB', '#DC2626', '#16A34A']  # blue, red, green
+
 # Additional single-color options, layered on top of the brand theme.
 # Mapped to matplotlib's built-in sequential colormaps (not a flat color)
 # so multi-category charts still render with visible contrast.
@@ -66,6 +73,24 @@ PALETTE_CHOICES = (
     'deep', 'colorblind', 'viridis', 'mako', 'rocket', 'flare', 'crest',
     'coolwarm', 'pastel', 'bright', 'muted', 'dark',
 )
+
+
+def _brand_palette_for_count(base_colors, n_categories):
+    """
+    Auto-extend a brand palette to fit the number of bars/slices being
+    drawn: use the brand colors as-is while there are enough of them, and
+    once n_categories exceeds that, append the additional blue/red/green
+    colors (in that order) before falling back to cycling from the start.
+    This only applies to the brand/theme palette — an explicitly chosen
+    single color (blue/red/green/etc.) is never auto-mixed with others.
+    """
+    if n_categories <= len(base_colors):
+        return base_colors
+    extended = list(base_colors) + EXTRA_BRAND_COLORS
+    if n_categories <= len(extended):
+        return extended
+    # Still more categories than brand + extras: cycle the extended list.
+    return [extended[i % len(extended)] for i in range(n_categories)]
 
 
 class ChartService:
@@ -91,7 +116,25 @@ class ChartService:
         )
 
     @staticmethod
-    def resolve_palette(name):
+    def _contrasting_text_color(background_hex):
+        """
+        Pick black or white text/gridline color based on the relative
+        luminance of an explicit background color, so an instruction like
+        "black background" doesn't also make the title/axis text
+        unreadable black-on-black by leaving it at its old default.
+        """
+        try:
+            hex_str = str(background_hex).lstrip('#')
+            if len(hex_str) == 3:
+                hex_str = ''.join(c * 2 for c in hex_str)
+            r, g, b = (int(hex_str[i:i + 2], 16) for i in (0, 2, 4))
+            luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+            return '#111111' if luminance > 0.6 else '#FFFFFF'
+        except Exception:
+            return '#FFFFFF'
+
+    @staticmethod
+    def resolve_palette(name, n_categories=None):
         """
         Resolve a palette name into whatever seaborn/matplotlib actually
         expects: a hex color list for brand/theme palettes, a colormap
@@ -101,12 +144,21 @@ class ChartService:
         seaborn accepts either form (a list of colors or a colormap name
         string) anywhere a `palette=` argument is used, so callers don't
         need to know which kind they got back.
+
+        When `name` resolves to a brand/theme palette and n_categories is
+        given, the brand colors are auto-extended with the additional
+        blue/red/green colors once there are more bars/slices than brand
+        colors (see _brand_palette_for_count) — an explicit single-color
+        choice (blue/red/green/etc.) is returned as-is and never mixed in.
         """
         if not name:
             return None
         key = str(name).strip().lower()
         if key in BRAND_PALETTES:
-            return BRAND_PALETTES[key]
+            base = BRAND_PALETTES[key]
+            if n_categories:
+                return _brand_palette_for_count(base, n_categories)
+            return base
         if key in COLOR_ALIASES:
             return COLOR_ALIASES[key]
         return name
@@ -114,7 +166,8 @@ class ChartService:
     def render_png_bytes(self, labels, values, chart_type='bar', title='Chart',
                           xlabel='', ylabel='', palette=None, style=None,
                           dpi=None, figsize=None, value_format='{:,.0f}', show_data_labels=True, show_variance=False, show_trend=False,
-                          noise_variance=None, noise_seed=None):
+                          noise_variance=None, noise_seed=None,
+                          background_color=None, series_color=None):
         """
         Render a chart to raw PNG bytes.
 
@@ -140,6 +193,16 @@ class ChartService:
                 variance" requirement is usually represented in reports.
             noise_seed: optional RNG seed so the injected noise is
                 reproducible across re-renders of the same request.
+            background_color: explicit hex/name to set the figure and
+                axes background to (e.g. "#000000" for "keep the
+                background black"). When set, title/axis/tick text and
+                the grid automatically switch to a light color so they
+                stay readable against a dark background, and vice versa.
+            series_color: explicit hex/name for the line/bars/area/pie
+                wedges themselves (e.g. "#FFE600" for "the line in
+                yellow"). Overrides `palette` for that one element when
+                given — this is a specific single-color instruction, not
+                a themed multi-color palette pick.
 
         Returns:
             bytes: PNG image data.
@@ -159,7 +222,15 @@ class ChartService:
 
         sns.set_style(style or self.style)
         sns.set_context(self.context)
-        active_palette = self.resolve_palette(palette or self.palette)
+        active_palette = self.resolve_palette(palette or self.palette, n_categories=len(labels))
+        if series_color:
+            # An explicit single-color instruction ("line in yellow",
+            # "bars in red") overrides whatever palette/theme was
+            # resolved above — every downstream branch (bar/line/area/
+            # pie) reads `colors`/`bar_palette` derived from
+            # active_palette, so overriding it here once is enough to
+            # apply consistently without touching each chart-type branch.
+            active_palette = [series_color]
         # Materialize to the exact number of categories needed so a short
         # brand/theme color list (e.g. the 4-color EY palette) cycles
         # cleanly across any number of bars without seaborn's "palette
@@ -167,6 +238,21 @@ class ChartService:
         bar_palette = sns.color_palette(active_palette, max(len(labels), 1))
 
         fig, ax = plt.subplots(figsize=figsize or self.figsize, dpi=dpi or self.dpi)
+
+        if background_color:
+            # Auto-contrast title/axis/tick/grid text against whatever
+            # background was requested, so "black background" doesn't
+            # also silently make the labels unreadable black-on-black.
+            fig.patch.set_facecolor(background_color)
+            ax.set_facecolor(background_color)
+            text_color = self._contrasting_text_color(background_color)
+            ax.title.set_color(text_color)
+            ax.xaxis.label.set_color(text_color)
+            ax.yaxis.label.set_color(text_color)
+            ax.tick_params(colors=text_color)
+            for spine in ax.spines.values():
+                spine.set_color(text_color)
+            ax.grid(True, color=text_color, alpha=0.15)
 
         try:
             if chart_type == 'bar':
@@ -261,7 +347,7 @@ class ChartService:
             fig.tight_layout()
 
             buf = io.BytesIO()
-            fig.savefig(buf, format='png', dpi=dpi or self.dpi)
+            fig.savefig(buf, format='png', dpi=dpi or self.dpi, facecolor=fig.get_facecolor())
             buf.seek(0)
             return buf.getvalue()
         except Exception as e:

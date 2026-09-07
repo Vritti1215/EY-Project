@@ -8,6 +8,7 @@ All endpoints require authentication.
 """
 
 import os
+import re
 import logging
 import json
 import statistics
@@ -94,6 +95,62 @@ def _latest_tabular_upload(user_id):
     ).order_by(UploadedFile.upload_date.desc()).first()
 
 
+# Generic words that don't literally match a column name but clearly
+# mean "the date/period axis" or "the numeric measure axis" — used when
+# resolving an explicit "x axis should be <phrase>" instruction to a real
+# dataframe column below.
+_AXIS_DATE_SYNONYMS = {'period', 'date', 'time', 'month', 'timeline', 'year', 'quarter'}
+_AXIS_VALUE_SYNONYMS = {'amount', 'value', 'revenue', 'sales', 'total', 'figure', 'number', 'count'}
+
+
+def _resolve_axis_field(field_text, df, month_col, value_col):
+    """
+    Resolve a free-text axis instruction ("amount", "period", "region")
+    to an actual dataframe column plus what kind of column it is.
+
+    Returns (column_name_or_None, kind) where kind is one of
+    'numeric' | 'date' | 'categorical' | None.
+
+    Tries, in order: (1) an exact/substring match against real column
+    names (handles the common case where the user just typed the real
+    column name, any casing/spacing), (2) generic synonyms ("period"/
+    "date" -> whichever date column was already detected elsewhere,
+    "amount"/"revenue" -> whichever numeric measure column was already
+    detected). This is deliberately conservative — if nothing resolves,
+    the caller just falls back to the normal auto-detected chart.
+    """
+    if not field_text:
+        return None, None
+    norm_field = re.sub(r'[^a-z0-9]', '', field_text.strip().lower())
+    if not norm_field:
+        return None, None
+
+    best_col = None
+    for col in df.columns:
+        norm_col = re.sub(r'[^a-z0-9]', '', str(col).lower())
+        if not norm_col:
+            continue
+        if norm_col == norm_field or norm_field in norm_col or norm_col in norm_field:
+            best_col = col
+            break
+
+    if best_col is not None:
+        try:
+            is_numeric = str(df[best_col].dtype).startswith(('int', 'float'))
+        except Exception:
+            is_numeric = False
+        if is_numeric:
+            return best_col, 'numeric'
+        return best_col, 'categorical'
+
+    field_lower = field_text.strip().lower()
+    if field_lower in _AXIS_DATE_SYNONYMS and month_col:
+        return month_col, 'date'
+    if field_lower in _AXIS_VALUE_SYNONYMS and value_col:
+        return value_col, 'numeric'
+    return None, None
+
+
 def _build_chart(
     chart_service,
     labels,
@@ -108,6 +165,8 @@ def _build_chart(
     show_variance=False,
     show_trend=False,
     noise_variance=None,
+    background_color=None,
+    series_color=None,
 ):
     """Render one chart and return its base64 data URI."""
     try:
@@ -124,6 +183,8 @@ def _build_chart(
             show_variance=show_variance,
             show_trend=show_trend,
             noise_variance=noise_variance,
+            background_color=background_color,
+            series_color=series_color,
         )
     except Exception:
         logger.exception("Chart generation failed: %s", chart_type)
@@ -231,6 +292,8 @@ def _render_chart_options(
     show_variance=False,
     show_trend=False,
     noise_variance=None,
+    background_color=None,
+    series_color=None,
 ):
     """Render the recommended chart and all available alternatives."""
     picks = [
@@ -264,6 +327,8 @@ def _render_chart_options(
             show_variance=show_variance,
             show_trend=show_trend,
             noise_variance=noise_variance,
+            background_color=background_color,
+            series_color=series_color,
         )
         if image:
             rendered.append({
@@ -557,6 +622,26 @@ def send_message():
             group_col = detect_group_column(df.columns, user_message) \
                 or find_group_column_generic(df, user_message, exclude={month_col, value_col})
 
+            # Guard: a column can only ever be matched by NAME (e.g. the
+            # user literally typed "amount" while asking for an axis/
+            # column), so it's possible to match a continuous NUMERIC
+            # column here even though it's meaningless as a grouping
+            # category — e.g. "Amount" with ~1,900 distinct values across
+            # 2,000 rows isn't a category, it's a measure. Grouping by it
+            # produces a near-one-bar-per-row chart with no real
+            # aggregation. Reject such a match and let the normal
+            # time-series/monthly fallback below handle it instead.
+            if group_col is not None:
+                try:
+                    col_series = df[group_col]
+                    is_numeric_col = str(col_series.dtype).startswith(('int', 'float'))
+                    n_unique = col_series.nunique(dropna=True)
+                    distinct_ratio = n_unique / max(len(col_series), 1)
+                    if is_numeric_col and (n_unique > 40 or distinct_ratio > 0.5):
+                        group_col = None
+                except Exception:
+                    pass
+
             # --- NEW: apply a natural-language date-range filter, if the
             # user asked for one and we have a date column to filter on.
             # Applied to a COPY so downstream deterministic paths (unique
@@ -584,7 +669,94 @@ def send_message():
                 'q1', 'q2', 'q3', 'q4', 'qtr', 'date', 'period'
             )) and not explicit_group_match
 
-            if computed_context is None and group_col and not time_series_request:
+            axis_x_col, axis_x_kind = _resolve_axis_field(chart_custom.x_axis_field, df, month_col, value_col)
+            axis_y_col, axis_y_kind = _resolve_axis_field(chart_custom.y_axis_field, df, month_col, value_col)
+
+            # Figure out which resolved axis (if any) is the numeric
+            # measure and which is the category/date to group by — the
+            # user may name either one on x or y, so this has to work
+            # both ways round ("x=amount,y=period" AND "x=period,y=amount").
+            explicit_measure_col = explicit_category_col = explicit_category_kind = None
+            explicit_measure_on_x = None
+            if axis_x_kind == 'numeric' and axis_y_col:
+                explicit_measure_col, explicit_category_col = axis_x_col, axis_y_col
+                explicit_category_kind, explicit_measure_on_x = axis_y_kind, True
+            elif axis_y_kind == 'numeric' and axis_x_col:
+                explicit_measure_col, explicit_category_col = axis_y_col, axis_x_col
+                explicit_category_kind, explicit_measure_on_x = axis_x_kind, False
+
+            if computed_context is None and explicit_measure_col and explicit_category_col and user_wants_chart:
+                # An explicit "x axis should be X, y axis should be Y"
+                # instruction is the strongest possible signal — honor it
+                # directly instead of falling through to the auto-detected
+                # group/time-series branches below. Still aggregate
+                # properly (monthly totals for a date column, sum-by-
+                # category otherwise) rather than plotting raw per-row
+                # values, which is what produced a one-bar-per-row chart
+                # before this branch existed.
+                if explicit_category_kind == 'date':
+                    monthly = monthly_totals(df, explicit_category_col, explicit_measure_col)
+                    labels = [name for _, name, _ in monthly]
+                    values = [total for _, _, total in monthly]
+                else:
+                    labels, values = category_aggregate(df, explicit_category_col, explicit_measure_col, 'sum')
+
+                if labels:
+                    computed_context = build_ai_context(
+                        categories=(labels, values), category_label=explicit_category_col,
+                    )
+                    default_title = f'{tabular_filename} — {explicit_measure_col} by {explicit_category_col}'
+                    title = chart_custom.title or default_title
+                    # NOTE: chart_service.render_png_bytes() internally
+                    # swaps labels for chart_type='barh' (it always does
+                    # ax.set_xlabel(ylabel)/set_ylabel(xlabel) for barh so
+                    # the category names land on the correct axis) — so
+                    # callers must ALWAYS pass xlabel=category,
+                    # ylabel=measure regardless of visual orientation.
+                    # explicit_measure_on_x only decides chart_type below,
+                    # never label assignment, or the labels end up
+                    # double-swapped and backwards.
+                    xlabel = chart_custom.xlabel or explicit_category_col
+                    ylabel = chart_custom.ylabel or explicit_measure_col
+                    # Orientation follows the user's explicit axis request:
+                    # measure on x -> horizontal bar (or keep a line/area
+                    # override if they also asked for one); measure on y
+                    # with a date category -> a normal line trend.
+                    if chart_custom.chart_type:
+                        resolved_chart_type = chart_custom.chart_type
+                    elif explicit_measure_on_x:
+                        resolved_chart_type = 'barh'
+                    elif explicit_category_kind == 'date':
+                        resolved_chart_type = 'line'
+                    else:
+                        resolved_chart_type = 'bar'
+                    chart_service = ChartService.from_app_config(current_app.config)
+                    _, chart_type_source, chart_alternatives = _resolve_chart_set(
+                        resolved_chart_type, labels, values,
+                        is_time_series=(explicit_category_kind == 'date'), group_label=explicit_category_col,
+                    )
+                    chart_choices = _render_chart_options(
+                        chart_service,
+                        labels,
+                        values,
+                        resolved_chart_type,
+                        chart_alternatives,
+                        title,
+                        xlabel,
+                        ylabel,
+                        chart_palette_override,
+                        chart_style_override,
+                        show_data_labels=(chart_custom.show_data_labels is not False),
+                        show_variance=bool(chart_custom.show_variance),
+                        show_trend=bool(chart_custom.show_trend),
+                        noise_variance=chart_noise_variance,
+                        background_color=chart_custom.background_color,
+                        series_color=chart_custom.series_color,
+                    )
+                    chart_image = chart_choices[0]['image'] if chart_choices else None
+                    variance_summary = _chart_variance(labels, values)
+
+            elif computed_context is None and group_col and not time_series_request:
                 operation = requested_aggregation(user_message)
 
                 if operation == 'count':
@@ -630,6 +802,8 @@ def send_message():
                             show_variance=bool(chart_custom.show_variance),
                             show_trend=bool(chart_custom.show_trend),
                             noise_variance=chart_noise_variance,
+                            background_color=chart_custom.background_color,
+                            series_color=chart_custom.series_color,
                         )
                         chart_image = (
                             chart_choices[0]['image'] if chart_choices else None
@@ -679,6 +853,8 @@ def send_message():
                             show_variance=bool(chart_custom.show_variance),
                             show_trend=bool(chart_custom.show_trend),
                             noise_variance=chart_noise_variance,
+                            background_color=chart_custom.background_color,
+                            series_color=chart_custom.series_color,
                         )
                         chart_image = (
                             chart_choices[0]['image'] if chart_choices else None
@@ -731,6 +907,8 @@ def send_message():
                             show_variance=bool(chart_custom.show_variance),
                             show_trend=bool(chart_custom.show_trend),
                             noise_variance=chart_noise_variance,
+                            background_color=chart_custom.background_color,
+                            series_color=chart_custom.series_color,
                         )
                         chart_image = (
                             chart_choices[0]['image'] if chart_choices else None
@@ -886,6 +1064,8 @@ def choose_chart():
     show_trend = bool(data.get('show_trend', False))
     noise_variance = data.get('noise_variance')
     noise_variance = float(noise_variance) if noise_variance not in (None, '') else None
+    background_color = data.get('background_color') or None
+    series_color = data.get('series_color') or None
 
     service = ChartService.from_app_config(current_app.config)
     try:
@@ -901,6 +1081,8 @@ def choose_chart():
             show_variance=show_variance,
             show_trend=show_trend,
             noise_variance=noise_variance,
+            background_color=background_color,
+            series_color=series_color,
         )
     except Exception:
         logger.exception('Selected chart regeneration failed')

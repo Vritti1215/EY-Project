@@ -89,6 +89,61 @@ _SINGLE_COLOR_TO_PALETTE = {
     "white": "ey",
 }
 
+# --- Explicit per-element color specs ("background black", "line in
+# yellow", "bars in red") ----------------------------------------------
+# These are a DIFFERENT, more specific instruction than the whole-theme
+# palette above: the user is naming an exact color for one specific part
+# of the chart, not picking a themed multi-color set. When present, these
+# take priority over _parse_palette() for that element — e.g. "keep the
+# background black and the line yellow" must not collapse into just
+# "use the ey theme", it must set an actual black background AND an
+# actual yellow line explicitly.
+COLOR_NAME_TO_HEX = {
+    "black": "#000000", "white": "#FFFFFF",
+    "yellow": "#FFE600", "grey": "#9DA0A6", "gray": "#9DA0A6",
+    "blue": "#2563EB", "red": "#DC2626", "green": "#16A34A",
+    "orange": "#F97316", "purple": "#7C3AED", "pink": "#EC4899",
+    "cyan": "#06B6D4", "navy": "#1E3A8A", "maroon": "#7F1D1D",
+    "gold": "#EAB308", "teal": "#0D9488", "brown": "#78350F",
+    "silver": "#C0C0C0",
+}
+_COLOR_WORDS = "|".join(COLOR_NAME_TO_HEX.keys())
+
+# Element keyword -> regex fragments matching the noun this color word
+# describes, e.g. "background", "line", "bars"/"bar", "area", "fill".
+_ELEMENT_KEYWORDS = {
+    "background": ("background", "backdrop"),
+    "series": ("line", "bars?", "area", "fill", "graph line", "chart line", "wedges?", "slices?", "points?"),
+}
+
+
+def _parse_element_color(q: str, element: str) -> Optional[str]:
+    """
+    Find an explicit color word tied to a specific chart element, in
+    either word order: "black background" / "background in black" /
+    "background of the graph black", "yellow line" / "line in/to/as
+    yellow" / "line part in yellow". Returns a hex string or None.
+    """
+    nouns = "|".join(_ELEMENT_KEYWORDS[element])
+    other_nouns = "|".join(
+        n for e, ns in _ELEMENT_KEYWORDS.items() if e != element for n in ns
+    )
+    # "<color> <noun>" e.g. "black background", "yellow line"
+    m = re.search(rf"\b({_COLOR_WORDS})\s+(?:{nouns})\b", q)
+    if m:
+        return COLOR_NAME_TO_HEX[m.group(1)]
+    # "<noun> ... <color>", with up to a few filler words in between
+    # ("of the graph", "part", "in", "colored") — but the filler must
+    # NOT cross into "and"/"but" or the OTHER element's noun, otherwise
+    # a single message naming two different element colors (e.g.
+    # "background black and the line in yellow") would let this greedily
+    # skip straight past "black" and match the far-away "yellow" instead.
+    filler = rf"(?:(?!\b(?:and|but|{other_nouns})\b)\w+\s+){{0,5}}"
+    m = re.search(rf"\b(?:{nouns})\b\s+{filler}({_COLOR_WORDS})\b", q)
+    if m:
+        return COLOR_NAME_TO_HEX[m.group(1)]
+    return None
+
 
 def _parse_chart_type(q: str) -> Optional[str]:
     for chart_type, phrases in _CHART_TYPE_PHRASES:
@@ -118,6 +173,10 @@ class ChartCustomization:
     show_variance: Optional[bool] = None  # ±1 SD band (line/area only)
     show_trend: Optional[bool] = None  # linear trend line (line/area only)
     noise_variance: Optional[float] = None  # injected +/-N% spec-tolerance noise
+    background_color: Optional[str] = None  # explicit hex, e.g. "background black"
+    series_color: Optional[str] = None  # explicit hex for line/bars/area/pie, e.g. "line in yellow"
+    x_axis_field: Optional[str] = None  # raw text, e.g. "amount" from "x axis should be amount"
+    y_axis_field: Optional[str] = None  # raw text, e.g. "period" from "y axis should be period"
 
 
 def _parse_axis_rename(q: str) -> tuple:
@@ -218,10 +277,43 @@ def _parse_noise_variance(q: str) -> Optional[float]:
     return None
 
 
+def _parse_axis_field(q: str, axis: str) -> Optional[str]:
+    """
+    Parse an explicit "put THIS column on THIS axis" instruction, e.g.
+    "x axis should be amount", "on the y axis it should be period",
+    "y-axis: region", "make x axis = revenue". This is a DIFFERENT
+    instruction than _parse_axis_rename() above — that only renames the
+    text label shown on an axis, this says which real data column should
+    actually drive that axis. Returns the raw phrase (resolved against
+    real dataframe columns by the caller, which has access to the df).
+    """
+    m = re.search(
+        rf"\b{axis}[\s-]?axis\b\s*(?:it\s+)?(?:should\s+be|should\s+show|will\s+be|is|as|:|=|to)\s+"
+        r"([a-z0-9 _%$/-]+?)(?:\s+and\b|\s+on\b|\s+while\b|,|\.|$)",
+        q,
+    )
+    if m:
+        field = m.group(1).strip()
+        if field:
+            return field
+    return None
+
+
 def parse_chart_customization(message: str) -> ChartCustomization:
     """Deterministic — no LLM round-trip needed for this structured a parse."""
     q = (message or "").lower()
     xlabel, ylabel = _parse_axis_rename(q)
+
+    # Explicit per-element colors ("black background", "line in yellow")
+    # are a stronger, more specific signal than the whole-theme guess in
+    # _parse_palette() — check them first, and suppress the whole-theme
+    # palette guess when an explicit element color was found, so "keep
+    # the background black and the line yellow" doesn't collapse into
+    # "use the ey theme" just because both color words are brand colors.
+    background_color = _parse_element_color(q, "background")
+    series_color = _parse_element_color(q, "series")
+    palette = None if (background_color or series_color) else _parse_palette(q)
+
     return ChartCustomization(
         title=_parse_title(q),
         xlabel=xlabel,
@@ -229,10 +321,14 @@ def parse_chart_customization(message: str) -> ChartCustomization:
         date_range=_parse_month_range(q),
         show_data_labels=_parse_data_labels(q),
         chart_type=_parse_chart_type(q),
-        palette=_parse_palette(q),
+        palette=palette,
         show_variance=_parse_show_variance(q),
         show_trend=_parse_show_trend(q),
         noise_variance=_parse_noise_variance(q),
+        background_color=background_color,
+        series_color=series_color,
+        x_axis_field=_parse_axis_field(q, 'x'),
+        y_axis_field=_parse_axis_field(q, 'y'),
     )
 
 

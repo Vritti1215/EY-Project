@@ -1,0 +1,211 @@
+.landing-page {
+  --insight-primary: #e4b729;
+  --insight-processing: #9473db;
+  --insight-bg: #ffffff;
+  --insight-ink: #2e2e38;
+  --insight-muted: #777782;
+  position: relative;
+  isolation: isolate;
+  background: var(--insight-bg);
+  color: var(--insight-ink);
+}
+.dark .landing-page { --insight-bg: #111116; --insight-ink: #ffffff; }
+.landing-page main, .landing-page footer { position: relative; z-index: 1; }
+.landing-page section[id] { scroll-margin-top: 88px; }
+.insight-background {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  contain: strict;
+  /* Keep the actual 3D scene in the margins, not over the reading column. */
+  mask-image: linear-gradient(90deg, #000 0%, #000 12%, #0003 32%, #0001 50%, #0003 68%, #000 88%, #000 100%);
+}
+.insight-background canvas { display: block; width: 100%; height: 100%; opacity: 0; transition: opacity 700ms ease; }
+.scene-ready .insight-background canvas { opacity: .85; }
+.insight-fallback {
+  position: absolute;
+  inset: 0;
+  opacity: .12;
+  background-image: radial-gradient(circle, var(--insight-processing) 1px, transparent 1.5px);
+  background-size: 48px 48px;
+}
+.scene-ready .insight-fallback { opacity: 0; }
+.landing-page #about { background: color-mix(in srgb, var(--insight-bg) 85%, transparent); }
+.landing-page [data-reveal] { opacity: 1; }
+.landing-page .reveal-pending { opacity: 0; transform: translateY(18px); }
+.landing-page .reveal-visible { animation: insight-enter 650ms cubic-bezier(.2,.7,.2,1) both; }
+@keyframes insight-enter { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+.landing-page [data-tilt] {
+  transform: perspective(1100px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg));
+  transition: transform 350ms ease, box-shadow 350ms ease;
+}
+.landing-page .feature-card { transition: border-color 250ms ease, box-shadow 250ms ease; }
+.landing-page .feature-card:hover { border-color: var(--insight-processing); }
+.ai-insight-rail { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 40px; }
+.ai-insight-float, .ai-insight-chip, .ai-contact-insight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--insight-processing) 22%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--insight-bg) 94%, var(--insight-processing));
+  color: var(--insight-ink);
+}
+.ai-insight-float { padding: 18px; min-width: 0; text-align: left; }
+.ai-insight-float > div, .ai-contact-insight > div { display: flex; flex-direction: column; gap: 4px; }
+.insight-kicker { font-size: 14px; font-weight: 600; letter-spacing: .06em; color: var(--insight-processing); }
+.ai-insight-float strong, .ai-contact-insight strong { font-size: 14px; font-weight: 600; }
+.ai-insight-float small { color: var(--insight-muted); font-size: 14px; line-height: 1.5; }
+.insight-dot, .insight-chip-pulse { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--insight-primary); }
+.insight-icon { display: inline-flex; flex-shrink: 0; color: var(--insight-processing); }
+.ai-insight-chip-wrap { display: flex; justify-content: center; margin-top: 24px; }
+.ai-insight-chip { padding: 12px 18px; font-size: 14px; line-height: 1.5; }
+.ai-contact-insight { width: fit-content; max-width: 100%; margin: 0 auto 32px; padding: 14px 20px; text-align: left; }
+.ai-insight-flow { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 40px; }
+.flow-node { color: var(--insight-muted); font-size: 14px; }
+.flow-line { width: 56px; height: 1px; background: color-mix(in srgb, var(--insight-processing) 40%, transparent); }
+.motion-toggle {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 60;
+  border: 1px solid color-mix(in srgb, var(--insight-muted) 35%, transparent);
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: var(--insight-bg);
+  color: var(--insight-ink);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.motion-toggle,
+.motion-toggle[hidden] { display: none; }
+.landing-page :focus-visible { outline: 2px solid var(--insight-processing); outline-offset: 4px; }
+.landing-page.motion-paused [data-reveal] { animation: none; opacity: 1; transform: none; }
+.landing-page.motion-paused [data-tilt] { transform: none; transition: none; }
+@media (max-width: 767px) {
+  .ai-insight-rail { grid-template-columns: 1fr; }
+  .insight-background { mask-image: linear-gradient(90deg, #0008, #0001 25%, #0001 75%, #0008); }
+  .scene-ready .insight-background canvas { opacity: .55; }
+  .flow-line { width: 24px; }
+}
+
+/* Perspective belongs to the parent so reveal rotation and pointer tilt compose. */
+.landing-page .ai-insight-rail,
+.landing-page section,
+.landing-page .grid { perspective: 1400px; }
+.landing-page [data-tilt] {
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+}
+.landing-page [data-tilt] > * {
+  transform: translateZ(0);
+  transition: transform 650ms cubic-bezier(.16,1,.3,1);
+}
+.landing-page .hero-preview > .flex { transform-style: preserve-3d; }
+.landing-page .hero-preview > .flex > div {
+  transition: transform 700ms cubic-bezier(.16,1,.3,1), box-shadow 700ms ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .landing-page [data-tilt]:hover {
+    transform: perspective(1100px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)) translateY(-6px);
+  }
+  .landing-page [data-tilt]:hover > * { transform: translateZ(22px); }
+  .landing-page .hero-preview:hover > .flex > div:nth-child(odd) { transform: translateZ(18px) translateX(-3px); }
+  .landing-page .hero-preview:hover > .flex > div:nth-child(even) { transform: translateZ(32px) translateX(3px); }
+}
+.landing-page.motion-paused [data-tilt] *,
+.landing-page.motion-paused [data-tilt]:hover { transform: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .landing-page [data-tilt] * { transform: none !important; }
+}
+
+/* Individual translate keeps entrances independent of the existing 3D tilt. */
+.landing-page .reveal-pending { transform: none; translate: 0 24px; }
+.landing-page .reveal-visible { animation: insight-content-enter 850ms cubic-bezier(.16,1,.3,1) var(--reveal-delay, 0ms) both; }
+@keyframes insight-content-enter {
+  from { opacity: 0; translate: 0 32px; rotate: x 7deg; scale: .975; }
+  to { opacity: 1; translate: 0 0; rotate: x 0deg; scale: 1; }
+}
+.landing-page .hero-title { animation-duration: 1100ms; }
+.landing-page .hero-preview { animation-duration: 1200ms; }
+.landing-page .feature-card,
+.landing-page .ai-insight-float,
+.landing-page #contact .grid > div {
+  transition: transform 450ms cubic-bezier(.16,1,.3,1), border-color 350ms ease, box-shadow 450ms ease;
+}
+.landing-page .hero-actions a,
+.landing-page nav a,
+.landing-page nav button {
+  transition: transform 300ms cubic-bezier(.16,1,.3,1), background-color 300ms ease, color 300ms ease, box-shadow 300ms ease;
+}
+.landing-page .hero-actions a svg,
+.landing-page .feature-card svg,
+.landing-page .insight-icon { transition: transform 450ms cubic-bezier(.16,1,.3,1); }
+.landing-page nav a[href^="#"] {
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 8px;
+  transition: text-decoration-color 300ms ease, text-underline-offset 300ms ease, color 300ms ease;
+}
+.landing-page nav a[href^="#"]:hover { text-decoration-color: currentColor; text-underline-offset: 5px; }
+@media (hover: hover) and (pointer: fine) {
+  .landing-page .feature-card:hover,
+  .landing-page .ai-insight-float:hover,
+  .landing-page #contact .grid > div:hover {
+    transform: perspective(1100px) rotateX(var(--tilt-x, 0deg)) rotateY(var(--tilt-y, 0deg)) translateY(-6px);
+    box-shadow: 0 16px 32px -16px color-mix(in srgb, var(--insight-processing) 35%, transparent);
+  }
+  .landing-page .hero-actions a:hover { transform: translateY(-3px); }
+  .landing-page .hero-actions a:hover svg { transform: translate(2px, -2px); }
+  .landing-page .feature-card:hover svg { transform: rotate(-8deg) scale(1.1); }
+  .landing-page .ai-insight-float:hover .insight-icon { transform: rotate(8deg); }
+}
+.landing-page .hero-actions a:active { transform: translateY(0) scale(.98); }
+.landing-page .insight-dot,
+.landing-page .insight-chip-pulse { animation: insight-signal-pulse 3.2s ease-in-out infinite; }
+.landing-page .ai-insight-float:nth-child(3) .insight-dot { animation-delay: 1.6s; }
+@keyframes insight-signal-pulse {
+  0%, 100% { opacity: .65; transform: scale(.9); }
+  45% { opacity: 1; transform: scale(1.15); }
+}
+.landing-page .flow-line { position: relative; overflow: hidden; height: 2px; }
+.landing-page .flow-line::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--insight-primary);
+  transform: translateX(-100%);
+  animation: insight-data-travel 3.2s cubic-bezier(.65,0,.35,1) infinite;
+}
+.landing-page .flow-line:nth-of-type(4)::after { animation-delay: 1.6s; }
+@keyframes insight-data-travel {
+  0%, 15% { transform: translateX(-100%); }
+  65%, 100% { transform: translateX(100%); }
+}
+.landing-page .flow-node { animation: insight-node-active 4.8s ease-in-out infinite; }
+.landing-page .flow-node:nth-of-type(3) { animation-delay: 1.6s; }
+.landing-page .flow-node:nth-of-type(5) { animation-delay: 3.2s; }
+@keyframes insight-node-active {
+  0%, 65%, 100% { color: var(--insight-muted); }
+  20%, 40% { color: var(--insight-processing); }
+}
+.landing-page.motion-paused *,
+.landing-page.motion-paused *::before,
+.landing-page.motion-paused *::after { animation-play-state: paused !important; transition: none !important; }
+.landing-page.motion-paused [data-reveal] { opacity: 1; translate: none; animation: none; }
+.landing-page.motion-paused .feature-card:hover,
+.landing-page.motion-paused .ai-insight-float:hover,
+.landing-page.motion-paused #contact .grid > div:hover,
+.landing-page.motion-paused .hero-actions a,
+.landing-page.motion-paused svg,
+.landing-page.motion-paused .insight-icon { transform: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .landing-page [data-reveal] { translate: none !important; }
+
+  .landing-page [data-reveal] { animation: none !important; opacity: 1 !important; transform: none !important; }
+  .landing-page [data-tilt] { transform: none !important; }
+  .landing-page *, .landing-page *::before, .landing-page *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}

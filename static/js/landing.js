@@ -6,7 +6,6 @@
   page.dataset.insightInitialized = 'true';
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const finePointer = matchMedia('(hover: hover) and (pointer: fine)');
-  const control = document.getElementById('insightMotion');
   const events = new AbortController();
   const on = (target, type, handler, options = {}) => target.addEventListener(type, handler, { ...options, signal: events.signal });
   let paused = false;
@@ -25,16 +24,12 @@
   page.querySelectorAll('.hero-preview > .flex.flex-col > div').forEach((el, index) => {
     el.style.setProperty('--reveal-delay', `${450 + index * 350}ms`);
   });
-  if (control) control.hidden = false;
   page.querySelectorAll('.hero-preview, .feature-card, .ai-insight-float').forEach(el => el.setAttribute('data-tilt', ''));
   const tiltElements = [...page.querySelectorAll('[data-tilt]')];
   let observer;
 
   function updateMotion() {
     page.classList.toggle('motion-paused', !motionAllowed());
-    control.textContent = reduced.matches ? 'Reduced motion enabled' : paused ? 'Resume animation' : 'Pause animation';
-    control.disabled = reduced.matches;
-    control.setAttribute('aria-pressed', String(!motionAllowed()));
     if (!motionAllowed()) {
       observer?.disconnect();
       revealElements.forEach(el => el.classList.remove('reveal-pending'));
@@ -42,7 +37,6 @@
     }
     sceneApi?.refresh();
   }
-  on(control, 'click', () => { paused = !paused; updateMotion(); });
   on(reduced, 'change', updateMotion);
   updateMotion();
 
@@ -87,6 +81,7 @@
     events.abort();
   });
   on(window, 'pageshow', () => sceneApi?.refresh());
+  on(document, 'visibilitychange', () => page.classList.toggle('motion-hidden', document.hidden));
 
   async function initializeScene() {
     // Dynamic import keeps navigation and readable content independent of the CDN.
@@ -221,7 +216,8 @@
       const processing = tokens.getPropertyValue('--insight-processing').trim();
       const primary = tokens.getPropertyValue('--insight-primary').trim();
       pointMaterial.color.set(processing); lineMaterial.color.set(processing);
-      documentMaterial.color.set(processing); signalMaterial.color.set(primary); barMaterial.color.set(primary);
+      documentMaterial.color.set(processing); signalMaterial.color.set(primary);
+      barMaterial.color.set('#b4dbc5');
       scanMaterial.color.set(primary);
       refresh();
     }
@@ -270,7 +266,7 @@
         beam.position.y = 0.78 - cycle * 1.56;
         beam.scale.x = Math.min(1, Math.sin(cycle * Math.PI) * 3);
       });
-      barMaterial.opacity = (dark ? 0.65 : 0.45) * Math.max(0, 1 - Math.abs(p - 2));
+      barMaterial.opacity = (dark ? 0.32 : 0.38) * Math.max(0, 1 - Math.abs(p - 2));
       world.rotation.y = reduced.matches ? 0 : Math.sin(time * 0.16) * 0.09 + Math.sin(p * Math.PI) * 0.12;
       world.rotation.x = reduced.matches ? 0 : Math.cos(time * 0.12) * 0.045;
       documents.forEach((doc, i) => {
@@ -311,8 +307,8 @@
     }, { passive: true });
     on(document.documentElement, 'pointerleave', () => { pointer.x = 0; pointer.y = 0; });
     on(document, 'visibilitychange', refresh);
-    on(canvas, 'webglcontextlost', event => { event.preventDefault(); contextLost = true; cancelAnimationFrame(raf); page.classList.remove('scene-ready'); control.hidden = false; });
-    on(canvas, 'webglcontextrestored', () => { contextLost = false; page.classList.add('scene-ready'); control.hidden = false; resize(); });
+    on(canvas, 'webglcontextlost', event => { event.preventDefault(); contextLost = true; cancelAnimationFrame(raf); page.classList.remove('scene-ready'); });
+    on(canvas, 'webglcontextrestored', () => { contextLost = false; page.classList.add('scene-ready'); resize(); });
     const themeObserver = new MutationObserver(theme);
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     const sizeObserver = 'ResizeObserver' in window ? new ResizeObserver(measureAnchors) : null;
@@ -328,11 +324,10 @@
     };
     resize(); theme();
     document.fonts?.ready.then(() => { if (!disposed) measureAnchors(); });
-    page.classList.add('scene-ready'); control.hidden = false;
+    page.classList.add('scene-ready');
   }
   initializeScene().catch(() => {
     sceneApi?.dispose();
     page.classList.remove('scene-ready');
-    control.hidden = false;
   });
 })();

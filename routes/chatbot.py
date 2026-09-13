@@ -38,7 +38,7 @@ from services.insight_service import (
 
 # --- NEW: feature modules -----------------------------------------------
 from services.chart_recommender import recommend_chart_set
-from services.chart_customization import parse_chart_customization, apply_month_range_filter
+from services.chart_customization import parse_chart_customization, apply_month_range_filter, has_customization
 from services.prompt_guidance import classify_prompt_intent, system_prompt_for, EDGE_CASE_INSTRUCTIONS
 from services.data_profile_service import build_data_profile, validate_profile
 # --------------------------------------------------------------------------
@@ -613,7 +613,15 @@ def send_message():
                     )
 
             chart_keywords = current_app.config.get('CHART_TRIGGER_KEYWORDS')
-            user_wants_chart = wants_chart(user_message, chart_keywords)
+            # A message counts as "wants a chart" if it either uses an
+            # explicit chart word ("chart", "plot", "trend", ...) OR it
+            # carries a graph customization/specification of its own
+            # (a chart type, color, axis rename/mapping, date range,
+            # label/variance/trend toggle, noise %). This is what makes
+            # a pure follow-up like "put the title as Q1 Sales and color
+            # the bars red" generate/regenerate a graph on its own,
+            # instead of requiring the user to also type "chart".
+            user_wants_chart = wants_chart(user_message, chart_keywords) or has_customization(chart_custom)
 
             month_col = find_column(df.columns, MONTH_COLUMN_ALIASES) \
                 or find_date_column_generic(df, user_message)

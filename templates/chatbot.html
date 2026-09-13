@@ -211,7 +211,13 @@
                             <i data-lucide="bar-chart-3" class="w-4 h-4 text-brand-600"></i>
                             <span class="text-xs font-semibold text-surface-700 dark:text-surface-200">Chart options</span>
                         </div>
-                        <span class="text-[10px] text-surface-400">Applied when you request a graph/chart</span>
+                        <div class="flex items-center gap-2">
+                            <span class="hidden sm:inline text-[10px] text-surface-400">Applied when you request a graph/chart</span>
+                            <button type="button" onclick="closeChartOptions()" title="Close" aria-label="Close chart options"
+                                class="p-1 rounded-btn text-surface-400 hover:text-brand-600 hover:bg-brand-50 dark:hover:bg-brand-950/30 transition-colors">
+                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
                     </div>
                     <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
                         <label class="text-[10px] text-surface-500">Type
@@ -333,11 +339,34 @@
 <!-- Chart enlarge / lightbox modal -->
 <div id="chart-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/70 p-4" onclick="closeChartModal(event)">
     <div class="relative max-w-5xl w-full">
-        <button type="button" onclick="closeChartModal(event)" class="absolute -top-10 right-0 text-white/80 hover:text-white text-sm font-medium flex items-center gap-1">
-            <i data-lucide="x" class="w-5 h-5"></i> Close
-        </button>
         <img id="chart-modal-img" src="" alt="Enlarged chart" class="w-full max-h-[85vh] object-contain rounded-xl bg-white shadow-2xl" onclick="event.stopPropagation()">
     </div>
+</div>
+
+<!-- Fixed to the viewport (not the image container) so it's always
+     visible on top, regardless of image height or scroll position. -->
+<div id="chart-modal-controls" class="hidden fixed top-4 right-4 z-[60] items-center gap-2">
+    <button type="button" onclick="minimizeChartModal(event)" title="Minimize" aria-label="Minimize chart"
+        class="p-2 rounded-full bg-black/60 hover:bg-black/80 text-white/90 hover:text-white transition-colors">
+        <i data-lucide="minus" class="w-5 h-5"></i>
+    </button>
+    <button type="button" onclick="closeChartModal(event)" title="Close" aria-label="Close chart"
+        class="p-2 rounded-full bg-black/60 hover:bg-black/80 text-white/90 hover:text-white transition-colors">
+        <i data-lucide="x" class="w-5 h-5"></i>
+    </button>
+</div>
+
+<!-- Minimized chart — a small picture-in-picture thumbnail pinned to
+     the corner. Click it to restore, or use its own close button. -->
+<div id="chart-modal-thumb" class="hidden fixed bottom-4 right-4 z-50 w-40 rounded-lg overflow-hidden shadow-2xl border border-surface-700 cursor-pointer group relative" onclick="restoreChartModal()">
+    <img id="chart-modal-thumb-img" src="" alt="Minimized chart" class="w-full h-auto block">
+    <div class="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+        <i data-lucide="maximize-2" class="w-5 h-5 text-white opacity-0 group-hover:opacity-100"></i>
+    </div>
+    <button type="button" onclick="event.stopPropagation(); closeChartModal(event)" title="Close" aria-label="Close chart"
+        class="absolute top-1 right-1 p-1 rounded-full bg-black/60 hover:bg-black/80 text-white/90">
+        <i data-lucide="x" class="w-3.5 h-3.5"></i>
+    </button>
 </div>
 
 {% endblock %}
@@ -362,6 +391,9 @@ function toggleChartOptions() {
     const panel = document.getElementById('chart-options');
     panel.classList.toggle('hidden');
     if (typeof lucide !== 'undefined') lucide.createIcons();
+}
+function closeChartOptions() {
+    document.getElementById('chart-options')?.classList.add('hidden');
 }
 function insertChartPrompt() {
     const input = document.getElementById('message-input');
@@ -656,8 +688,13 @@ function enlargeChartImage(src, alt) {
     const img = document.getElementById('chart-modal-img');
     img.src = src;
     img.alt = alt || 'Enlarged chart';
+    modal.dataset.src = src;
+    modal.dataset.alt = img.alt;
     modal.classList.remove('hidden');
     modal.classList.add('flex');
+    document.getElementById('chart-modal-controls').classList.remove('hidden');
+    document.getElementById('chart-modal-controls').classList.add('flex');
+    document.getElementById('chart-modal-thumb').classList.add('hidden');
     if (typeof lucide !== 'undefined') lucide.createIcons();
 }
 function closeChartModal(evt) {
@@ -666,7 +703,35 @@ function closeChartModal(evt) {
     modal.classList.add('hidden');
     modal.classList.remove('flex');
     document.getElementById('chart-modal-img').src = '';
+    const controls = document.getElementById('chart-modal-controls');
+    controls.classList.add('hidden');
+    controls.classList.remove('flex');
+    document.getElementById('chart-modal-thumb').classList.add('hidden');
+    document.getElementById('chart-modal-thumb-img').src = '';
 }
+function minimizeChartModal(evt) {
+    if (evt) evt.stopPropagation();
+    const modal = document.getElementById('chart-modal');
+    const src = modal.dataset.src || document.getElementById('chart-modal-img').src;
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+    const controls = document.getElementById('chart-modal-controls');
+    controls.classList.add('hidden');
+    controls.classList.remove('flex');
+    document.getElementById('chart-modal-thumb-img').src = src || '';
+    document.getElementById('chart-modal-thumb').classList.remove('hidden');
+}
+function restoreChartModal() {
+    const thumb = document.getElementById('chart-modal-thumb');
+    const src = document.getElementById('chart-modal-thumb-img').src;
+    thumb.classList.add('hidden');
+    enlargeChartImage(src, document.getElementById('chart-modal-img').alt);
+}
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const modal = document.getElementById('chart-modal');
+    if (modal && !modal.classList.contains('hidden')) closeChartModal();
+});
 
 function showTypingIndicator() {
     const div = document.createElement('div'); div.id = 'typing-indicator'; div.className = 'chat-bubble mb-4 max-w-3xl mx-auto';

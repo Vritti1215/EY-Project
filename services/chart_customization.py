@@ -112,7 +112,9 @@ _COLOR_WORDS = "|".join(COLOR_NAME_TO_HEX.keys())
 # Element keyword -> regex fragments matching the noun this color word
 # describes, e.g. "background", "line", "bars"/"bar", "area", "fill".
 _ELEMENT_KEYWORDS = {
-    "background": ("background", "backdrop"),
+    # "backgound" is a common typo (missing 'r') — accept it alongside
+    # the correct spelling so it isn't silently dropped.
+    "background": ("background", "backgound", "backdrop"),
     "series": ("line", "bars?", "area", "fill", "graph line", "chart line", "wedges?", "slices?", "points?"),
 }
 
@@ -191,9 +193,31 @@ def _parse_axis_rename(q: str) -> tuple:
 
 
 def _parse_title(q: str) -> Optional[str]:
-    m = re.search(r"(?:title|call it|name it)\s+(?:to|as)?\s*[\"']?([A-Za-z0-9 _%$-]+)[\"']?", q)
+    """
+    'title Q3 Sales', 'call it "Sales Overview"', 'title of the graph is
+    Amount vs Product', 'title of graph amount vs product' (no connector
+    word at all) -> the title text.
+
+    Handles an optional "of the graph/chart" filler right after the
+    trigger word — without this, "title of graph amount vs product"
+    would greedily capture "of graph amount vs product" as the literal
+    title text instead of skipping the filler and taking just
+    "amount vs product". The connector word (is/as/to/:/=) is also
+    optional for the same reason: "x axis amount" style phrasing with no
+    connector at all must still resolve, not just "x axis is amount".
+    """
+    m = re.search(
+        r"(?:title|call it|name it)\s+"
+        r"(?:of\s+(?:the\s+)?(?:graph|chart)\s+)?"
+        r"(?:should\s+be|should\s+say|is|as|to|:|=)?\s*"
+        r"[\"']?([A-Za-z0-9 _%$-]+?)[\"']?"
+        r"(?:\s+and\b|\s+on\b|\s+while\b|,|\.|$)",
+        q,
+    )
     if m:
-        return m.group(1).strip().rstrip(".")
+        text = m.group(1).strip().rstrip(".")
+        if text:
+            return text
     return None
 
 
@@ -287,8 +311,12 @@ def _parse_axis_field(q: str, axis: str) -> Optional[str]:
     actually drive that axis. Returns the raw phrase (resolved against
     real dataframe columns by the caller, which has access to the df).
     """
+    # The connector phrase ("should be" / "is" / "as" / ":" / "=" / "to")
+    # is OPTIONAL: "on x axis amount, y axis product" names the field
+    # right after "axis" with no connector word at all, and must resolve
+    # the same as "x axis should be amount" does.
     m = re.search(
-        rf"\b{axis}[\s-]?axis\b\s*(?:it\s+)?(?:should\s+be|should\s+show|will\s+be|is|as|:|=|to)\s+"
+        rf"\b{axis}[\s-]?axis\b\s*(?:it\s+)?(?:should\s+be|should\s+show|will\s+be|is|as|:|=|to)?\s+"
         r"([a-z0-9 _%$/-]+?)(?:\s+and\b|\s+on\b|\s+while\b|,|\.|$)",
         q,
     )
@@ -329,6 +357,31 @@ def parse_chart_customization(message: str) -> ChartCustomization:
         series_color=series_color,
         x_axis_field=_parse_axis_field(q, 'x'),
         y_axis_field=_parse_axis_field(q, 'y'),
+    )
+
+
+def has_customization(custom: ChartCustomization) -> bool:
+    """
+    True if the message carried ANY graph customization/specification —
+    a chart type, a color/theme, an axis rename or field mapping, a date
+    range, data-label/variance/trend toggles, or injected noise.
+
+    This is what lets a plain follow-up like "make the background black
+    and title it Q1 Sales" or "show only Jan-Jun with data labels"
+    trigger chart (re)generation on its own, even though it contains
+    none of the literal CHART_KEYWORDS_DEFAULT words ("chart", "graph",
+    "plot", ...). Without this, wants_chart() would miss pure
+    customization messages and the user's typed spec would be silently
+    dropped instead of producing a graph.
+    """
+    return any(
+        getattr(custom, field) is not None
+        for field in (
+            'title', 'xlabel', 'ylabel', 'date_range', 'show_data_labels',
+            'chart_type', 'palette', 'show_variance', 'show_trend',
+            'noise_variance', 'background_color', 'series_color',
+            'x_axis_field', 'y_axis_field',
+        )
     )
 
 

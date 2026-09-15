@@ -6,6 +6,29 @@
     <meta name="description" content="AI Assistant Portal — Enterprise-grade AI chatbot for intelligent conversations, document analysis, and data-driven insights.">
     <title>{% block title %}AI Assistant Portal{% endblock %}</title>
 
+    <!-- Global error guard: if ANY script on this page throws before the
+         UI finishes wiring itself up, surface it as a visible banner
+         instead of leaving a blank/black screen with no clue why. The
+         Tailwind dark-mode background (bg-surface-950) is near-black, so
+         a silent JS crash previously looked exactly like "nothing
+         loaded" with zero feedback. This must load first, before any
+         other <script>, so it can catch errors from everything after it. -->
+    <script>
+        window.addEventListener('error', function (e) {
+            console.error('Page error:', e.message, 'at', e.filename + ':' + e.lineno);
+            var banner = document.getElementById('__boot_error_banner');
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = '__boot_error_banner';
+                banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;' +
+                    'background:#b91c1c;color:#fff;font:13px/1.5 monospace;padding:10px 16px;' +
+                    'white-space:pre-wrap;';
+                document.documentElement.appendChild(banner);
+            }
+            banner.textContent = 'Page script error: ' + e.message + '  (' + e.filename.split('/').pop() + ':' + e.lineno + ') — open DevTools Console for the full stack.';
+        });
+    </script>
+
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -204,14 +227,19 @@
     {% if request.endpoint != 'chatbot.chat' and current_user.is_authenticated %}
 
     <!-- FAB: Floating Action Button (minimized state) -->
+    <!-- Pill shape with a visible "Ask AI" label + icon so the button is
+         recognizable as the chatbot at a glance, not just a bare icon. -->
     <button id="cw-fab"
             onclick="ChatWidget.toggle()"
             aria-label="Open AI chat assistant"
             role="button"
             tabindex="0"
-            class="fixed bottom-6 right-6 z-[60] w-14 h-14 bg-brand-600 hover:bg-brand-700 rounded-full shadow-widget cursor-pointer flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-brand-500/30">
-        <i data-lucide="message-circle" class="w-6 h-6 text-[#2E2E38]" id="cw-fab-icon-open"></i>
-        <i data-lucide="chevron-down" class="w-6 h-6 text-[#2E2E38] hidden" id="cw-fab-icon-close"></i>
+            class="fixed bottom-6 right-6 z-[60] h-14 pl-4 pr-5 bg-brand-600 hover:bg-brand-700 rounded-full shadow-widget cursor-pointer flex items-center gap-2 transition-all duration-200 hover:scale-105 active:scale-95 focus:outline-none focus:ring-4 focus:ring-brand-500/30">
+        <span class="relative flex items-center justify-center w-6 h-6">
+            <i data-lucide="bot" class="w-6 h-6 text-[#2E2E38]" id="cw-fab-icon-open"></i>
+            <i data-lucide="chevron-down" class="w-6 h-6 text-[#2E2E38] hidden" id="cw-fab-icon-close"></i>
+        </span>
+        <span id="cw-fab-label" class="text-sm font-semibold text-[#2E2E38] whitespace-nowrap">Ask AI</span>
         <span id="cw-badge" class="hidden absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">!</span>
     </button>
 
@@ -623,7 +651,7 @@
         _esc(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
     };
 
-    document.addEventListener('DOMContentLoaded', () => ChatWidget.init());
+    document.addEventListener('DOMContentLoaded', () => { try { ChatWidget.init(); } catch (e) { console.error('ChatWidget.init failed:', e); } });
     </script>
     {% endif %}
     <!-- ═══════ END FLOATING CHATBOT WIDGET ═══════ -->
@@ -631,20 +659,27 @@
     <script>
         const ThemeManager = {
             init() {
-                const saved = localStorage.getItem('theme');
-                if (saved === 'dark') { document.documentElement.classList.add('dark'); document.documentElement.classList.remove('light'); }
-                else { document.documentElement.classList.add('light'); document.documentElement.classList.remove('dark'); }
+                try {
+                    const saved = localStorage.getItem('theme');
+                    if (saved === 'dark') { document.documentElement.classList.add('dark'); document.documentElement.classList.remove('light'); }
+                    else { document.documentElement.classList.add('light'); document.documentElement.classList.remove('dark'); }
+                } catch (e) {
+                    // localStorage can throw in some privacy/incognito modes —
+                    // never let theme init block the rest of the page.
+                    console.warn('ThemeManager.init failed, defaulting to light:', e);
+                    document.documentElement.classList.add('light');
+                }
             },
             toggle() {
                 const isDark = document.documentElement.classList.toggle('dark');
                 document.documentElement.classList.toggle('light');
-                localStorage.setItem('theme', isDark ? 'dark' : 'light');
+                try { localStorage.setItem('theme', isDark ? 'dark' : 'light'); } catch (e) {}
                 if (typeof lucide !== 'undefined') lucide.createIcons();
             }
         };
         ThemeManager.init();
     </script>
-    <script>document.addEventListener('DOMContentLoaded', () => { if (typeof lucide !== 'undefined') lucide.createIcons(); });</script>
+    <script>document.addEventListener('DOMContentLoaded', () => { try { if (typeof lucide !== 'undefined') lucide.createIcons(); } catch (e) { console.error('lucide.createIcons failed:', e); } });</script>
     {% block extra_scripts %}{% endblock %}
 </body>
 </html>

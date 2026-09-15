@@ -64,7 +64,8 @@ class Config:
     # CHART_TRIGGER_KEYWORDS="graph,chart,plot,visualize,trend"
     CHART_TRIGGER_KEYWORDS = _parse_list(
         'CHART_TRIGGER_KEYWORDS',
-        'graph,chart,plot,visualize,visualise,trend,bar chart,line chart,pie chart,draw,diagram,picture'
+        'graph,chart,plot,visualize,visualise,trend,bar chart,line chart,pie chart,draw,diagram,picture,'
+        'compare,comparing,comparison,relationship between,correlation between,versus,vs'
     )
     # Month a fiscal year starts on: 1 = calendar year (Q1 = Jan-Mar),
     # 4 = Indian-style fiscal year (Q1 = Apr-Jun). Defaults to 4 for this

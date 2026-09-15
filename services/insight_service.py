@@ -134,6 +134,102 @@ def find_column(columns, aliases):
     return None
 
 
+def find_columns_multi(columns, aliases):
+    """
+    Like find_column(), but returns ALL matching columns instead of just
+    the first one. Needed because find_column() silently picks "whichever
+    comes first" — fine when there's only one candidate, but financial
+    sheets routinely have several related date columns (Order Date, Ship
+    Date, Due Date) or value columns (Amount, Discount Amount, Tax) that
+    all match the same alias list. Callers use this to detect that
+    ambiguity and resolve it deliberately via resolve_column_ambiguity()
+    instead of silently defaulting to the first match.
+
+    Returns:
+        list[str]: matching column names, in their original sheet order.
+    """
+    matches = []
+    for col in columns:
+        low = str(col).strip().lower()
+        if any(alias in low for alias in aliases):
+            matches.append(col)
+    return matches
+
+
+def resolve_column_ambiguity(candidates, message, ai_service=None, kind='date'):
+    """
+    Given several equally-plausible columns of the same kind (all matched
+    the same alias list), pick the one most relevant to the user's
+    question instead of defaulting to the first.
+
+    Resolution order:
+      1. If the question names one of the candidates directly, use it —
+         this is not ambiguous, the user already told us.
+      2. Otherwise, if an ai_service is available, ask it to pick using
+         contextual understanding of the column names and the question
+         (e.g. prefer 'Order Date' over 'Ship Date' for a general sales
+         trend question; prefer 'Revenue'/'Amount' over 'Discount'/'Tax'
+         for a general totals question).
+      3. Otherwise, fall back to the first candidate.
+
+    Args:
+        candidates: list[str] of column names of the same kind.
+        message: the user's natural-language question.
+        ai_service: optional AI service exposing get_chat_response().
+        kind: 'date' or 'value' — only used to phrase the AI prompt.
+
+    Returns:
+        tuple(resolved_column: str, was_ambiguous: bool, alternatives: list[str]):
+            was_ambiguous is True only when the pick required a guess
+            (case 2 or 3) rather than an explicit mention (case 1), so
+            callers know whether to disclose the choice to the user.
+    """
+    if not candidates:
+        return None, False, []
+    if len(candidates) == 1:
+        return candidates[0], False, []
+
+    msg_lower = (message or '').lower()
+
+    # 1. Direct mention in the question — the user already disambiguated.
+    for col in candidates:
+        if str(col).strip().lower() in msg_lower:
+            others = [c for c in candidates if c != col]
+            return col, False, others
+
+    alternatives = candidates
+
+    # 2. Ask the AI service to pick contextually.
+    if ai_service:
+        prompt = (
+            f"A dataset has these {kind} columns, all equally plausible: "
+            f"{candidates}.\n"
+            f"The user's question is: \"{message}\"\n"
+            f"Pick the single column name most relevant to this question. "
+            f"If the question gives no hint, prefer the primary/transactional "
+            f"column over a secondary one "
+            + ("(e.g. an order/invoice/transaction date over a due/ship/return date)."
+               if kind == 'date' else
+               "(e.g. revenue/sales/amount over a discount/tax/fee adjustment).")
+            + " Return ONLY the exact column name, nothing else."
+        )
+        try:
+            result = ai_service.get_chat_response(
+                prompt,
+                system_prompt="Return only the exact column name from the list. No explanation, no markdown."
+            )
+            picked = (result.get("response") or "").strip().strip('"').strip("'")
+            for col in candidates:
+                if str(col).strip().lower() == picked.lower():
+                    others = [c for c in candidates if c != col]
+                    return col, True, others
+        except Exception as exc:
+            logger.warning("Column ambiguity resolver AI failed: %s", exc)
+
+    # 3. Fall back to the first candidate.
+    return candidates[0], True, [c for c in candidates[1:]]
+
+
 def find_numeric_column_generic(df, message=None, exclude=None):
     """
     Generic (domain-agnostic) numeric/currency/stock column resolver.

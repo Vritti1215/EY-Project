@@ -13,12 +13,12 @@ import re
 import pandas as pd
 from services.schema_service import (
     classify_dataframe, resolve_numeric_column, resolve_date_column,
-    resolve_group_column,
+    resolve_group_column, detect_financial_ambiguity,
 )
 
 logger = logging.getLogger(__name__)
 
-VALID_CHART_TYPES = ("bar", "barh", "line", "area", "pie")
+VALID_CHART_TYPES = ("bar", "barh", "line", "area", "pie", "histogram")
 VALID_AGGREGATIONS = ("count", "sum", "mean", "min", "max", "none")
 
 # Kept in sync with services/chart_service.py's BRAND_PALETTES /
@@ -83,6 +83,7 @@ def parse_natural_customization(question):
         "line": ("line chart", "line graph", "line plot"),
         "area": ("area chart", "area graph"),
         "pie": ("pie chart", "pie graph"),
+        "histogram": ("histogram", "distribution chart", "frequency chart"),
     }.items():
         if any(w in q for w in words):
             out["chart_type"] = typ
@@ -143,10 +144,10 @@ def _fallback(df, question):
         }
     if numeric:
         return {
-            "best_chart_type":"bar", "x_column":None, "y_column":numeric,
+            "best_chart_type":"histogram", "x_column":None, "y_column":numeric,
             "group_column":None, "aggregation":"none",
-            "reason":"Single numeric measure.",
-            "alternatives":["barh"]
+            "reason":"Single numeric measure with no date/category to group by — a histogram shows its distribution.",
+            "alternatives":["bar","barh"]
         }
     return {
         "best_chart_type":"bar", "x_column":None, "y_column":None,
@@ -156,27 +157,49 @@ def _fallback(df, question):
 
 
 def recommend_chart_plan(df, question, ai_service=None, overrides=None):
+    schema = classify_dataframe(df)
     profile = build_data_profile(df)
+    ambiguity = detect_financial_ambiguity(schema, message=question)
     fallback = _fallback(df, question)
     overrides = overrides or {}
     custom = parse_natural_customization(question)
     ai_plan = {}
 
     if ai_service:
+        ambiguity_note = ""
+        if ambiguity["is_ambiguous"]:
+            ambiguity_note = (
+                "\n\nIMPORTANT — this dataset has more than one plausible "
+                "column of the same kind:\n"
+                f"  Candidate date columns: {ambiguity['ambiguous_dates'] or 'n/a'}\n"
+                f"  Candidate value columns: {ambiguity['ambiguous_values'] or 'n/a'}\n"
+                "Use the DATA PROFILE (column names, sample values, min/max/mean) "
+                "and the USER REQUEST wording together to infer which one is "
+                "actually relevant — e.g. prefer a 'Revenue'/'Sales'/'Amount'-style "
+                "column over a 'Discount'/'Tax'/'Fee' column unless the request "
+                "says otherwise, and prefer a transactional date (Order/Invoice "
+                "Date) over a secondary one (Due/Ship Date) unless the request "
+                "specifically asks about the secondary date. Do not just pick the "
+                "first column in the profile."
+            )
         prompt = (
             "You are the chart-planning layer of an analytics application.\n"
             "Do NOT calculate any values. Select only real columns from the supplied profile.\n"
-            "Choose the best chart and up to two alternatives.\n\n"
-            "DATA PROFILE:\n" + json.dumps(profile, ensure_ascii=False)
+            "Use contextual understanding of the column names, sample values and "
+            "statistics in the DATA PROFILE — not just their position — to decide "
+            "which columns are most relevant to the USER REQUEST.\n"
+            "Choose the best chart and up to two alternatives."
+            + ambiguity_note
+            + "\n\nDATA PROFILE:\n" + json.dumps(profile, ensure_ascii=False)
             + "\n\nUSER REQUEST:\n" + question
             + "\n\nReturn ONLY JSON:\n"
-            '{"best_chart_type":"bar|barh|line|area|pie",'
+            '{"best_chart_type":"bar|barh|line|area|pie|histogram",'
             '"x_column":"exact column or null",'
             '"y_column":"exact numeric column or null",'
             '"group_column":"exact categorical column or null",'
             '"aggregation":"count|sum|mean|min|max|none",'
-            '"reason":"short reason",'
-            '"alternatives":["bar|barh|line|area|pie"]}'
+            '"reason":"short reason, and if multiple date/value columns existed, why this one was chosen",'
+            '"alternatives":["bar|barh|line|area|pie|histogram"]}'
         )
         try:
             result = ai_service.get_chat_response(
@@ -228,6 +251,8 @@ def recommend_chart_plan(df, question, ai_service=None, overrides=None):
     plan["month_end"] = custom.get("month_end")
     plan["selection_source"] = "ai" if ai_plan else "deterministic_fallback"
     plan["profile"] = profile
+    plan["ambiguity"] = ambiguity
+    plan["warnings"] = [ambiguity["message"]] if ambiguity["is_ambiguous"] else []
 
     # Final validation.
     if plan["best_chart_type"] not in VALID_CHART_TYPES:
@@ -319,10 +344,15 @@ def build_chart_variants(df, plan, chart_service):
     alternatives = [x for x in plan.get("alternatives",[]) if x != best][:2]
 
     # Guarantee useful alternatives where possible.
-    for candidate in ("line","bar","barh","area","pie"):
+    for candidate in ("line","bar","barh","area","pie","histogram"):
         if len(alternatives) >= 2 or candidate == best:
             continue
         if candidate == "pie" and (len(labels) > 8 or any(v < 0 for v in values)):
+            continue
+        if candidate == "histogram" and plan.get("group_column"):
+            # Histogram plots a raw numeric distribution — not a
+            # meaningful alternative once data has been grouped/aggregated
+            # by a category or date.
             continue
         alternatives.append(candidate)
 

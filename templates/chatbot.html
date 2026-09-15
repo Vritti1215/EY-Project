@@ -85,7 +85,7 @@
         <div class="p-3 border-t border-surface-100 dark:border-surface-800">
             <div class="flex items-center gap-3 px-2 mb-2">
                 <div class="w-8 h-8 rounded-full bg-gradient-to-br from-brand-500 to-brand-700 flex items-center justify-center text-xs font-bold text-[#2E2E38]">
-                    {{ current_user.username[0] | upper }}
+                    {{ (current_user.username or '?')[:1] | upper }}
                 </div>
                 <div class="flex-1 min-w-0">
                     <p class="text-xs font-medium text-surface-800 dark:text-surface-200 truncate">{{ current_user.username }}</p>
@@ -228,6 +228,7 @@
                                 <option value="line">Line</option>
                                 <option value="area">Area</option>
                                 <option value="pie">Pie</option>
+                                <option value="histogram">Histogram</option>
                             </select>
                         </label>
                         <label class="text-[10px] text-surface-500">Colors / palette

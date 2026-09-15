@@ -358,6 +358,78 @@ def resolve_date_column(df, schema, message=None):
     return scored[0]['name']
 
 
+def detect_financial_ambiguity(schema, message=None):
+    """
+    Flag cases where a financial-style dataset has MULTIPLE plausible
+    date columns and/or MULTIPLE plausible value columns that the
+    question does not disambiguate by name.
+
+    This matters specifically for financial data because sheets like
+    "Company_Financial_Test_Data.xlsx" routinely carry several related
+    date fields (Order Date / Invoice Date / Payment Date / Due Date)
+    and several related value fields (Revenue / Cost / Profit / Tax)
+    side by side. Silently picking "the first one" can quietly chart
+    the wrong metric or the wrong timeline, which is worse than picking
+    nothing — so this returns enough detail for the caller (chart
+    planner / route / UI) to either warn the user or ask them to
+    confirm which column was intended.
+
+    Args:
+        schema: output of classify_dataframe(df).
+        message: optional natural-language question. Columns explicitly
+            named in the question are excluded from the ambiguity list
+            since the user has already disambiguated them.
+
+    Returns:
+        dict: {
+            'is_ambiguous': bool,
+            'ambiguous_dates': [column names not mentioned in message],
+            'ambiguous_values': [column names not mentioned in message],
+            'message': human-readable warning, or '' if not ambiguous,
+        }
+    """
+    msg_lower = (message or '').lower()
+
+    def _mentioned(name):
+        return str(name).lower() in msg_lower
+
+    date_candidates = [c['name'] for c in schema if c['type'] == 'datetime']
+    value_candidates = [
+        c['name'] for c in schema if c['type'] in ('currency', 'number', 'stock')
+    ]
+
+    unresolved_dates = [c for c in date_candidates if not _mentioned(c)]
+    unresolved_values = [c for c in value_candidates if not _mentioned(c)]
+
+    ambiguous_dates = unresolved_dates if len(date_candidates) > 1 else []
+    ambiguous_values = unresolved_values if len(value_candidates) > 1 else []
+
+    is_ambiguous = bool(ambiguous_dates) or bool(ambiguous_values)
+    parts = []
+    if ambiguous_dates:
+        parts.append(
+            f"multiple date fields ({', '.join(ambiguous_dates)})"
+        )
+    if ambiguous_values:
+        parts.append(
+            f"multiple value fields ({', '.join(ambiguous_values)})"
+        )
+
+    warning = (
+        f"This dataset has {' and '.join(parts)}. "
+        "The most relevant ones were auto-selected based on the data profile "
+        "and your question — mention a specific column name to override."
+        if is_ambiguous else ''
+    )
+
+    return {
+        'is_ambiguous': is_ambiguous,
+        'ambiguous_dates': ambiguous_dates,
+        'ambiguous_values': ambiguous_values,
+        'message': warning,
+    }
+
+
 def resolve_group_column(df, schema, message=None, exclude=None):
     """
     Find the best categorical (Text, Boolean, or Geography) column to

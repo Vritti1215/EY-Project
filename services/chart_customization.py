@@ -63,6 +63,7 @@ _CHART_TYPE_PHRASES = (
     ('line', ("line chart", "line graph", "line plot")),
     ('area', ("area chart", "area graph", "area plot")),
     ('pie', ("pie chart", "pie graph", "pie plot")),
+    ('histogram', ("histogram", "frequency distribution", "distribution chart", "distribution graph")),
 )
 
 # --- Colors / theme mentioned directly in the message ----------------------
@@ -147,6 +148,72 @@ def _parse_element_color(q: str, element: str) -> Optional[str]:
     return None
 
 
+# --- An explicit list of several distinct colors ("colors should be
+# red green blue orange purple") -------------------------------------
+# This is a THIRD, distinct color instruction from the two above: not a
+# themed multi-color palette guess (_parse_palette), and not a single
+# color for one element (_parse_element_color) — the user is naming an
+# exact, ordered set of colors to cycle across the bars/slices/lines.
+def _parse_color_list(q: str) -> Optional[list]:
+    """
+    'colors should be red green blue orange purple etc',
+    'colours: red, green, blue', 'use red, green and blue for the
+    slices' -> ['#DC2626', '#16A34A', '#2563EB', ...] in the order
+    given. Returns None when fewer than 2 distinct colors are named,
+    so a plain single-color mention ("colors should be red") still
+    falls through to the existing single-hue palette logic instead.
+    """
+    m = re.search(
+        r"\bcolou?rs\b\s*(?:should\s+be|to\s+be|:|=|are)?\s*"
+        r"([a-z, ]+?)(?:\betc\b|\.|$)",
+        q,
+    )
+    if not m:
+        return None
+    words = re.findall(rf"\b({_COLOR_WORDS})\b", m.group(1))
+    ordered_unique = []
+    for w in words:
+        if w not in ordered_unique:
+            ordered_unique.append(w)
+    if len(ordered_unique) < 2:
+        return None
+    return [COLOR_NAME_TO_HEX[w] for w in ordered_unique]
+
+
+_OF_TWO_COLUMNS_RE = re.compile(
+    r"\b(?:chart|graph|plot|diagram|visuali[sz]e|visuali[sz]ation)\b\s*(?:of\s+)?"
+    r"([a-z0-9 _%$/]+?)\s+(?:and|vs\.?|versus)\s+"
+    r"([a-z0-9 _%$/]+?)"
+    r"(?:\s+and\b|\s+with\b|\s+on\b|\s+background\b|\s+colou?rs?\b|\s+title\b|,|\.|$)"
+)
+
+
+def _parse_of_two_columns(q: str) -> Optional[tuple]:
+    """
+    'create a line graph of amount and product', 'bar chart of region
+    and sales' -> ('amount', 'product') in the order named, so the
+    caller can feed them into the SAME strong, deterministic
+    "explicit x/y column" pipeline that "x axis amount, y axis
+    product" already uses.
+
+    Without this, a message that names its two columns via "chart of A
+    and B" instead of "x axis A, y axis B" fell through to a much
+    weaker heuristic branch that (a) defaults to counting rows instead
+    of aggregating the named numeric column, and (b) still honors the
+    chart-type override in theory but was masking the real underlying
+    bug — the wrong DATA (row counts instead of amount) being plotted,
+    which is what actually produced a bar-shaped chart of near-equal
+    bar heights regardless of chart_type.
+    """
+    m = _OF_TWO_COLUMNS_RE.search(q)
+    if not m:
+        return None
+    a, b = m.group(1).strip(), m.group(2).strip()
+    if a and b:
+        return a, b
+    return None
+
+
 def _parse_chart_type(q: str) -> Optional[str]:
     for chart_type, phrases in _CHART_TYPE_PHRASES:
         if any(p in q for p in phrases):
@@ -177,6 +244,7 @@ class ChartCustomization:
     noise_variance: Optional[float] = None  # injected +/-N% spec-tolerance noise
     background_color: Optional[str] = None  # explicit hex, e.g. "background black"
     series_color: Optional[str] = None  # explicit hex for line/bars/area/pie, e.g. "line in yellow"
+    color_list: Optional[list] = None  # ordered list of hex colors, e.g. "colors should be red green blue"
     x_axis_field: Optional[str] = None  # raw text, e.g. "amount" from "x axis should be amount"
     y_axis_field: Optional[str] = None  # raw text, e.g. "period" from "y axis should be period"
 
@@ -211,7 +279,7 @@ def _parse_title(q: str) -> Optional[str]:
         r"(?:of\s+(?:the\s+)?(?:graph|chart)\s+)?"
         r"(?:should\s+be|should\s+say|is|as|to|:|=)?\s*"
         r"[\"']?([A-Za-z0-9 _%$-]+?)[\"']?"
-        r"(?:\s+and\b|\s+on\b|\s+while\b|,|\.|$)",
+        r"(?:\s+and\b|\s+on\b|\s+while\b|\s+colou?rs?\b|\s+background\b|,|\.|$)",
         q,
     )
     if m:
@@ -340,7 +408,30 @@ def parse_chart_customization(message: str) -> ChartCustomization:
     # "use the ey theme" just because both color words are brand colors.
     background_color = _parse_element_color(q, "background")
     series_color = _parse_element_color(q, "series")
-    palette = None if (background_color or series_color) else _parse_palette(q)
+    # Only look for a generic multi-color LIST when neither element
+    # color matched — "background color purple and line color orange"
+    # already fully explains itself via the two element-specific colors
+    # above, and _parse_color_list's looser "color ... <words> ..."
+    # matching would otherwise also swallow "purple" and "orange" out of
+    # that same sentence and misread it as a 2-color category list too.
+    color_list = None if (background_color or series_color) else _parse_color_list(q)
+    # An explicit ordered color list ("colors should be red green blue")
+    # is the most specific color signal of the three — it beats both the
+    # whole-theme palette guess AND the single-hue guess baked into
+    # _parse_palette() (which would otherwise see the word "red" in that
+    # same phrase and collapse it down to a single-hue "Reds" colormap).
+    palette = None if (background_color or series_color or color_list) else _parse_palette(q)
+
+    x_axis_field = _parse_axis_field(q, 'x')
+    y_axis_field = _parse_axis_field(q, 'y')
+    if not x_axis_field and not y_axis_field:
+        # Fall back to "chart/graph of A and B" phrasing when the user
+        # didn't use the more explicit "x axis A, y axis B" wording —
+        # both name the same two columns, so both should get routed
+        # into the same strong, deterministic aggregation branch.
+        pair = _parse_of_two_columns(q)
+        if pair:
+            x_axis_field, y_axis_field = pair
 
     return ChartCustomization(
         title=_parse_title(q),
@@ -355,8 +446,9 @@ def parse_chart_customization(message: str) -> ChartCustomization:
         noise_variance=_parse_noise_variance(q),
         background_color=background_color,
         series_color=series_color,
-        x_axis_field=_parse_axis_field(q, 'x'),
-        y_axis_field=_parse_axis_field(q, 'y'),
+        color_list=color_list,
+        x_axis_field=x_axis_field,
+        y_axis_field=y_axis_field,
     )
 
 
@@ -379,7 +471,7 @@ def has_customization(custom: ChartCustomization) -> bool:
         for field in (
             'title', 'xlabel', 'ylabel', 'date_range', 'show_data_labels',
             'chart_type', 'palette', 'show_variance', 'show_trend',
-            'noise_variance', 'background_color', 'series_color',
+            'noise_variance', 'background_color', 'series_color', 'color_list',
             'x_axis_field', 'y_axis_field',
         )
     )
@@ -397,3 +489,104 @@ def apply_month_range_filter(df: pd.DataFrame, month_col: str, month_range: Opti
     months = df[month_col].apply(month_to_num)
     mask = months.apply(lambda m: m is not None and start_month <= m <= end_month)
     return df[mask]
+
+
+# ---------------------------------------------------------------------------
+# Multi-metric comparison detection ("compare EBITDA and Net Profit",
+# "relationship between marketing spending and revenue")
+# ---------------------------------------------------------------------------
+# The chart pipeline elsewhere in this app only ever resolves ONE numeric
+# "value" column per chart (see routes/chatbot.py's value_col detection).
+# That silently drops every metric after the first when a question names
+# two or more — "compare EBITDA and Net Profit" was rendering an EBITDA-
+# only bar chart with Net Profit quietly discarded, and "relationship
+# between marketing spending and revenue" often didn't even resolve one
+# usable column, so no chart was generated at all. detect_comparison_columns
+# + parse_comparison_colors below let the caller build a real multi-series
+# chart (grouped bars / multiple lines) instead.
+
+_COMPARISON_CUE_WORDS = (
+    'compare', 'comparing', 'comparison', 'versus', ' vs ', ' vs. ',
+    'relationship between', 'correlation between', 'against',
+)
+
+
+def detect_comparison_columns(df: pd.DataFrame, message: str, max_columns: int = 4) -> list:
+    """
+    Find two or more numeric/currency columns that are explicitly named
+    in the message, ordered by where they appear in the text (so
+    "compare EBITDA and Net Profit" keeps EBITDA first, Net Profit
+    second — the order the user asked for and presumably wants in the
+    legend/series order).
+
+    Returns [] unless at least 2 real columns are matched by name AND
+    the message reads like a genuine comparison request (contains a
+    comparison cue word). This second condition avoids over-triggering
+    on a message that merely mentions two unrelated numeric columns in
+    passing without asking to compare them.
+    """
+    if not message or df is None or len(df.columns) == 0:
+        return []
+
+    from services.schema_service import classify_dataframe
+
+    q = message.lower()
+    if not any(cue in q for cue in _COMPARISON_CUE_WORDS):
+        return []
+
+    schema = classify_dataframe(df)
+    numeric_types = {'number', 'currency', 'stock'}
+    candidates = [c['name'] for c in schema if c['type'] in numeric_types]
+
+    found = []
+    for col in candidates:
+        col_l = str(col).strip().lower()
+        if not col_l:
+            continue
+        idx = q.find(col_l)
+        if idx != -1:
+            found.append((idx, col))
+
+    found.sort(key=lambda pair: pair[0])
+    names = [name for _, name in found][:max_columns]
+    return names if len(names) >= 2 else []
+
+
+def parse_comparison_colors(message: str, columns: list) -> dict:
+    """
+    Map each comparison column to an explicit color the user tied to it
+    by name, e.g. "Use orange for EBITDA and green for Net Profit" ->
+    {"EBITDA": "#F97316", "Net Profit": "#16A34A"}. A column with no
+    explicit color mentioned is simply absent from the returned dict —
+    the caller falls back to a default palette color for it.
+    """
+    if not message or not columns:
+        return {}
+    q = message.lower()
+    mapping = {}
+    for col in columns:
+        col_l = re.escape(str(col).strip().lower())
+        # "<color> for <column>" / "<color> is for the <column>"
+        m = re.search(rf"\b({_COLOR_WORDS})\s+(?:is\s+)?for\s+(?:the\s+)?{col_l}\b", q)
+        if not m:
+            # "<column> in/as/colored <color>"
+            m = re.search(rf"\b{col_l}\b\s+(?:in|as|colou?red)\s+({_COLOR_WORDS})\b", q)
+        if m:
+            mapping[col] = COLOR_NAME_TO_HEX[m.group(1)]
+    return mapping
+
+
+def wants_category_on_y_axis(message: str, category_col: str) -> bool:
+    """
+    True when the user explicitly asked for the category/group column
+    (e.g. "Year") to sit on the Y-axis — i.e. they want a horizontal bar
+    chart, category on Y and the numeric measure on X. Handles the
+    common "<column> on the Y-axis" word order that _parse_axis_field()
+    above does not (that one only catches "Y axis should be <column>",
+    field named AFTER the word "axis"; this is field named BEFORE it).
+    """
+    if not message or not category_col:
+        return False
+    q = message.lower()
+    col_l = re.escape(str(category_col).strip().lower())
+    return re.search(rf"\b{col_l}\b[^.]{{0,20}}\by[\s-]?axis\b", q) is not None

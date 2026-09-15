@@ -30,7 +30,7 @@ import seaborn as sns
 
 logger = logging.getLogger(__name__)
 
-CHART_TYPES = ('bar', 'barh', 'line', 'area', 'pie')
+CHART_TYPES = ('bar', 'barh', 'line', 'area', 'pie', 'histogram')
 
 # ---------------------------------------------------------------------------
 # Brand / theme palettes
@@ -173,14 +173,14 @@ class ChartService:
                           xlabel='', ylabel='', palette=None, style=None,
                           dpi=None, figsize=None, value_format='{:,.0f}', show_data_labels=True, show_variance=False, show_trend=False,
                           noise_variance=None, noise_seed=None,
-                          background_color=None, series_color=None):
+                          background_color=None, series_color=None, color_list=None):
         """
         Render a chart to raw PNG bytes.
 
         Args:
             labels: category labels for the x-axis (or pie slice labels).
             values: numeric values, same length as labels.
-            chart_type: one of CHART_TYPES ('bar', 'barh', 'line', 'area', 'pie').
+            chart_type: one of CHART_TYPES ('bar', 'barh', 'line', 'area', 'pie', 'histogram').
             title, xlabel, ylabel: chart text.
             palette / style / dpi / figsize: per-call overrides of the
                 instance defaults — this is the "max configurability" knob;
@@ -209,6 +209,12 @@ class ChartService:
                 yellow"). Overrides `palette` for that one element when
                 given — this is a specific single-color instruction, not
                 a themed multi-color palette pick.
+            color_list: an ORDERED list of explicit hex colors (e.g.
+                "colors should be red green blue orange purple") to cycle
+                across the bars/slices/line points — a specific,
+                user-named multi-color set, distinct from picking a named
+                palette/theme. Takes priority over both `palette` and
+                `series_color` when given.
 
         Returns:
             bytes: PNG image data.
@@ -237,11 +243,27 @@ class ChartService:
             # active_palette, so overriding it here once is enough to
             # apply consistently without touching each chart-type branch.
             active_palette = [series_color]
+        if color_list:
+            # An explicit ORDERED list of colors ("colors should be red
+            # green blue orange purple") is more specific still than a
+            # single series_color — cycle the named colors across
+            # however many bars/slices/points there are so each
+            # category gets one of the user's exact requested colors,
+            # in the order given, instead of a seaborn colormap gradient.
+            active_palette = [color_list[i % len(color_list)] for i in range(len(labels))]
         # Materialize to the exact number of categories needed so a short
         # brand/theme color list (e.g. the 4-color EY palette) cycles
         # cleanly across any number of bars without seaborn's "palette
         # has fewer/more values than needed" warning.
-        bar_palette = sns.color_palette(active_palette, max(len(labels), 1))
+        # Histograms bin raw per-row values directly and never use a
+        # per-category palette (see the 'histogram' branch below), so
+        # skip materializing a potentially huge (one-per-row) color
+        # list for it — that's wasted work and can be slow for a
+        # large uploaded dataset.
+        bar_palette = (
+            sns.color_palette(active_palette, max(len(labels), 1))
+            if chart_type != 'histogram' else None
+        )
 
         fig, ax = plt.subplots(figsize=figsize or self.figsize, dpi=dpi or self.dpi)
 
@@ -349,6 +371,22 @@ class ChartService:
                        startangle=90)
                 ax.axis('equal')
 
+            elif chart_type == 'histogram':
+                # A histogram plots the DISTRIBUTION of one numeric
+                # column across all its raw rows — unlike every other
+                # chart type here, `labels` isn't meaningful (the
+                # caller passes it only to satisfy the equal-length
+                # validation above); only `values` (the raw numeric
+                # data points) is actually binned and plotted.
+                numeric_values = [v for v in values if v is not None]
+                bins = min(30, max(5, len(set(numeric_values)) or 1))
+                fill_color = (series_color or (color_list[0] if color_list else None)
+                              or (active_palette[0] if isinstance(active_palette, (list, tuple)) and active_palette else None)
+                              or '#2E2E38')
+                ax.hist(numeric_values, bins=bins, color=fill_color, edgecolor='white', linewidth=0.5)
+                ax.set_xlabel(xlabel)
+                ax.set_ylabel(ylabel or 'Frequency')
+
             ax.set_title(title, fontsize=13, fontweight='bold')
             fig.tight_layout()
 
@@ -366,5 +404,134 @@ class ChartService:
         """Same as render_png_bytes but returns a base64 PNG data URI string,
         ready to drop straight into an <img src="..."> or a download link."""
         png_bytes = self.render_png_bytes(*args, **kwargs)
+        encoded = base64.b64encode(png_bytes).decode('ascii')
+        return f'data:image/png;base64,{encoded}'
+
+    # -----------------------------------------------------------------
+    # Multi-series comparison charts ("EBITDA vs Net Profit by year",
+    # "Revenue and Marketing Expense over time")
+    # -----------------------------------------------------------------
+    # render_png_bytes()/render_base64() above only ever plot ONE
+    # numeric series against one set of category labels — there's no
+    # way to hand it two differently-colored metrics side by side. This
+    # is a separate, self-contained renderer for exactly that case: N
+    # named series, each with its own values and (optionally) its own
+    # explicit color, grouped bars or overlaid lines against a shared
+    # set of category/date labels. Kept independent of render_png_bytes
+    # rather than bolted onto it, so the existing single-series path
+    # (and everything that depends on its exact behavior) is untouched.
+    def render_comparison_png_bytes(self, labels, series, chart_type='bar',
+                                     title='Chart', xlabel='', ylabel='',
+                                     style=None, dpi=None, figsize=None,
+                                     value_format='{:,.0f}', show_data_labels=True,
+                                     background_color=None):
+        """
+        Render a multi-series comparison chart to raw PNG bytes.
+
+        Args:
+            labels: shared category/date labels (x-axis for bar/line,
+                y-axis category for barh), e.g. ['2021', '2022', ...].
+            series: list of dicts, each {'label': str, 'values': list[float],
+                'color': optional hex string}. Every series' values list
+                must be the same length as `labels`. A series with no
+                'color' gets the next color from a default cycle.
+            chart_type: 'bar' (grouped vertical bars), 'barh' (grouped
+                horizontal bars), or 'line' (one line per series).
+            title, xlabel, ylabel: chart text.
+            background_color: same as render_png_bytes — explicit hex to
+                set the figure/axes background, with automatic
+                black/white text contrast.
+
+        Returns:
+            bytes: PNG image data.
+        """
+        if chart_type not in ('bar', 'barh', 'line'):
+            raise ValueError("render_comparison_png_bytes only supports chart_type 'bar', 'barh', or 'line'.")
+        if not labels or not series:
+            raise ValueError("labels and series must be non-empty.")
+        for s in series:
+            if len(s.get('values') or []) != len(labels):
+                raise ValueError(f"Series '{s.get('label')}' values length must match labels length.")
+
+        default_cycle = ['#2E2E38', '#06B6D4', '#F97316', '#16A34A', '#7C3AED', '#DC2626']
+        for i, s in enumerate(series):
+            if not s.get('color'):
+                s['color'] = default_cycle[i % len(default_cycle)]
+
+        sns.set_style(style or self.style)
+        sns.set_context(self.context)
+
+        text_color = None
+        if background_color:
+            text_color = self._contrasting_text_color(background_color)
+
+        fig, ax = plt.subplots(figsize=figsize or self.figsize)
+        if background_color:
+            fig.patch.set_facecolor(background_color)
+            ax.set_facecolor(background_color)
+
+        n_series = len(series)
+        n_labels = len(labels)
+        x = list(range(n_labels))
+
+        try:
+            if chart_type in ('bar', 'barh'):
+                total_width = 0.8
+                bar_width = total_width / n_series
+                for i, s in enumerate(series):
+                    offset = (i - (n_series - 1) / 2) * bar_width
+                    positions = [xi + offset for xi in x]
+                    if chart_type == 'bar':
+                        bars = ax.bar(positions, s['values'], width=bar_width,
+                                       label=s['label'], color=s['color'])
+                    else:
+                        bars = ax.barh(positions, s['values'], height=bar_width,
+                                        label=s['label'], color=s['color'])
+                    if show_data_labels:
+                        ax.bar_label(bars, fmt=value_format, fontsize=7, padding=2,
+                                     color=text_color or 'black')
+                if chart_type == 'bar':
+                    ax.set_xticks(x); ax.set_xticklabels(labels, rotation=30, ha='right')
+                    ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
+                else:
+                    ax.set_yticks(x); ax.set_yticklabels(labels)
+                    ax.set_xlabel(ylabel); ax.set_ylabel(xlabel)
+            else:  # line
+                for s in series:
+                    ax.plot(x, s['values'], marker='o', linewidth=2,
+                            label=s['label'], color=s['color'])
+                    if show_data_labels:
+                        for xi, v in zip(x, s['values']):
+                            ax.annotate(value_format.format(v), (xi, v),
+                                        textcoords="offset points", xytext=(0, 6),
+                                        ha='center', fontsize=7, color=text_color or 'black')
+                ax.set_xticks(x); ax.set_xticklabels(labels, rotation=30, ha='right')
+                ax.set_xlabel(xlabel); ax.set_ylabel(ylabel)
+
+            ax.legend(fontsize=8)
+            ax.set_title(title, fontsize=13, fontweight='bold')
+            if text_color:
+                ax.title.set_color(text_color)
+                ax.xaxis.label.set_color(text_color)
+                ax.yaxis.label.set_color(text_color)
+                ax.tick_params(colors=text_color)
+                for spine in ax.spines.values():
+                    spine.set_color(text_color)
+            fig.tight_layout()
+
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png', dpi=dpi or self.dpi, facecolor=fig.get_facecolor())
+            buf.seek(0)
+            return buf.getvalue()
+        except Exception as e:
+            logger.error(f"Comparison chart rendering failed: {e}")
+            raise
+        finally:
+            plt.close(fig)
+
+    def render_comparison_base64(self, *args, **kwargs):
+        """Same as render_comparison_png_bytes but returns a base64 PNG
+        data URI string, ready to drop straight into an <img src="...">."""
+        png_bytes = self.render_comparison_png_bytes(*args, **kwargs)
         encoded = base64.b64encode(png_bytes).decode('ascii')
         return f'data:image/png;base64,{encoded}'

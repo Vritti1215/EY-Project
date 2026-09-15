@@ -33,12 +33,16 @@ from services.insight_service import (
     exact_category_count, unique_column_values, extract_time_from_question,
     suggest_chart_type,
     find_numeric_column_generic, find_date_column_generic, find_group_column_generic,
+    find_columns_multi, resolve_column_ambiguity,
     MONTH_COLUMN_ALIASES, VALUE_COLUMN_ALIASES,
 )
 
 # --- NEW: feature modules -----------------------------------------------
 from services.chart_recommender import recommend_chart_set
-from services.chart_customization import parse_chart_customization, apply_month_range_filter, has_customization
+from services.chart_customization import (
+    parse_chart_customization, apply_month_range_filter, has_customization,
+    detect_comparison_columns, parse_comparison_colors, wants_category_on_y_axis,
+)
 from services.prompt_guidance import classify_prompt_intent, system_prompt_for, EDGE_CASE_INSTRUCTIONS
 from services.data_profile_service import build_data_profile, validate_profile
 # --------------------------------------------------------------------------
@@ -101,6 +105,101 @@ def _latest_tabular_upload(user_id):
 # dataframe column below.
 _AXIS_DATE_SYNONYMS = {'period', 'date', 'time', 'month', 'timeline', 'year', 'quarter'}
 _AXIS_VALUE_SYNONYMS = {'amount', 'value', 'revenue', 'sales', 'total', 'figure', 'number', 'count'}
+
+
+def _find_year_like_column(df):
+    """
+    Find a column that looks like a discrete fiscal/calendar year field
+    (e.g. 'Year' with values 2021-2025), as distinct from a full date/
+    month column. Used to group a multi-metric comparison ("EBITDA vs
+    Net Profit by year") by year even when the underlying rows are
+    monthly and there's no pre-aggregated yearly total in the file.
+    """
+    for col in df.columns:
+        name = str(col).strip().lower()
+        if name == 'year' or name.endswith('_year') or name.endswith(' year') or name.startswith('year_'):
+            try:
+                if 0 < df[col].nunique(dropna=True) <= 50:
+                    return col
+            except Exception:
+                continue
+    return None
+
+
+def _merge_series_by_label(pairs_per_column):
+    """
+    Merge several {column: [(label, value), ...]} aggregations that were
+    computed independently (one groupby call per comparison metric) into
+    one shared label axis plus one values list per series, so they can
+    be plotted as grouped bars / multiple lines against the same
+    categories. A label missing from one series' own aggregation (e.g. a
+    year with no data for that metric) is filled with 0.0 rather than
+    dropped, so all series stay the same length as `labels`.
+    """
+    labels = []
+    seen = set()
+    for pairs in pairs_per_column.values():
+        for label, _ in pairs:
+            if label not in seen:
+                seen.add(label)
+                labels.append(label)
+
+    series = []
+    for col, pairs in pairs_per_column.items():
+        lookup = dict(pairs)
+        series.append({'label': str(col), 'values': [float(lookup.get(l, 0.0)) for l in labels]})
+    return labels, series
+
+
+def _build_comparison_chart_data(df, comparison_cols, month_col, group_col):
+    """
+    Decide how to group a multi-metric comparison request and build the
+    shared labels + per-metric series for it.
+
+    Resolution order:
+      1. A year-like column (see _find_year_like_column) -> sum each
+         metric per year. Matches "compare EBITDA and Net Profit for
+         each year" even when the file only has monthly rows.
+      2. A date/month column -> each metric's calendar-month total
+         (same aggregation monthly_totals() already uses elsewhere in
+         this app), for an "X vs Y over time" request.
+      3. A categorical group column (region, product, etc.) -> sum each
+         metric per category.
+      4. Otherwise, no reliable grouping is possible; caller should fall
+         back to the existing single-metric chart logic.
+
+    Returns (labels, series, group_label, is_time_series) or
+    (None, None, None, None) when no grouping could be resolved.
+    """
+    year_col = _find_year_like_column(df)
+    if year_col:
+        pairs_per_col = {}
+        for col in comparison_cols:
+            lbls, vals = category_sums(df, year_col, col)
+            pairs_per_col[col] = list(zip(lbls, vals))
+        labels, series = _merge_series_by_label(pairs_per_col)
+        if labels:
+            return labels, series, year_col, False
+
+    if month_col:
+        pairs_per_col = {}
+        for col in comparison_cols:
+            monthly = monthly_totals(df, month_col, col)
+            pairs_per_col[col] = [(name, total) for _, name, total in monthly]
+        labels, series = _merge_series_by_label(pairs_per_col)
+        if labels:
+            return labels, series, month_col, True
+
+    if group_col:
+        pairs_per_col = {}
+        for col in comparison_cols:
+            lbls, vals = category_sums(df, group_col, col)
+            pairs_per_col[col] = list(zip(lbls, vals))
+        labels, series = _merge_series_by_label(pairs_per_col)
+        if labels:
+            return labels, series, group_col, False
+
+    return None, None, None, None
 
 
 def _resolve_axis_field(field_text, df, month_col, value_col):
@@ -167,6 +266,7 @@ def _build_chart(
     noise_variance=None,
     background_color=None,
     series_color=None,
+    color_list=None,
 ):
     """Render one chart and return its base64 data URI."""
     try:
@@ -185,6 +285,7 @@ def _build_chart(
             noise_variance=noise_variance,
             background_color=background_color,
             series_color=series_color,
+            color_list=color_list,
         )
     except Exception:
         logger.exception("Chart generation failed: %s", chart_type)
@@ -294,6 +395,7 @@ def _render_chart_options(
     noise_variance=None,
     background_color=None,
     series_color=None,
+    color_list=None,
 ):
     """Render the recommended chart and all available alternatives."""
     picks = [
@@ -329,6 +431,7 @@ def _render_chart_options(
             noise_variance=noise_variance,
             background_color=background_color,
             series_color=series_color,
+            color_list=color_list,
         )
         if image:
             rendered.append({
@@ -546,6 +649,7 @@ def send_message():
     computed_context = None
     profile_warnings = []
     profile_ai_context = None
+    column_ambiguity_notes = []
 
     if tabular_filepath:
         df = load_dataframe(tabular_filepath, tabular_file_type)
@@ -630,6 +734,45 @@ def send_message():
             group_col = detect_group_column(df.columns, user_message) \
                 or find_group_column_generic(df, user_message, exclude={month_col, value_col})
 
+            # --- Financial-dataset validation: a sheet can legitimately
+            # have MORE than one date column ("Order Date" vs "Ship
+            # Date") or value column ("Amount" vs "Discount Amount").
+            # find_column() above only ever returns the FIRST alias
+            # match, so a second candidate would be silently ignored —
+            # re-check for that here and, when there genuinely is more
+            # than one candidate, resolve it contextually (does the
+            # user's own wording name one directly? failing that, ask
+            # the AI service to pick using the column names + the
+            # question) rather than keep guessing "whichever came
+            # first". column_ambiguity_notes collects anything that had
+            # to be resolved this way so the answer can be transparent
+            # about the pick instead of presenting a guess as certain.
+            month_candidates = find_columns_multi(df.columns, MONTH_COLUMN_ALIASES)
+            if len(month_candidates) > 1:
+                resolved_month, month_was_ambiguous, month_alternatives = resolve_column_ambiguity(
+                    month_candidates, user_message, ai_service=ai_service, kind='date',
+                )
+                if resolved_month:
+                    month_col = resolved_month
+                if month_was_ambiguous and month_alternatives:
+                    column_ambiguity_notes.append(
+                        f"Multiple date columns were present ({', '.join(month_candidates)}); "
+                        f"used '{month_col}' as the most contextually relevant one for this question."
+                    )
+
+            value_candidates = find_columns_multi(df.columns, VALUE_COLUMN_ALIASES)
+            if len(value_candidates) > 1:
+                resolved_value, value_was_ambiguous, value_alternatives = resolve_column_ambiguity(
+                    value_candidates, user_message, ai_service=ai_service, kind='value',
+                )
+                if resolved_value:
+                    value_col = resolved_value
+                if value_was_ambiguous and value_alternatives:
+                    column_ambiguity_notes.append(
+                        f"Multiple value columns were present ({', '.join(value_candidates)}); "
+                        f"used '{value_col}' as the most contextually relevant one for this question."
+                    )
+
             # Guard: a column can only ever be matched by NAME (e.g. the
             # user literally typed "amount" while asking for an axis/
             # column), so it's possible to match a continuous NUMERIC
@@ -669,6 +812,78 @@ def send_message():
             # of the word "revenue"), producing no usable result and
             # leaving the AI with no real numbers to answer from.
             explicit_group_match = detect_group_column(df.columns, user_message) is not None
+
+            # --- Multi-metric comparison charts ("compare EBITDA and Net
+            # Profit for each year", "relationship between marketing
+            # spending and revenue"). This must run BEFORE the single-
+            # metric explicit-axis/time-series branches below, since
+            # those only ever resolve ONE numeric column — a "compare A
+            # and B" request would otherwise silently keep just A (or,
+            # if neither alias list matched, produce no chart at all).
+            if computed_context is None and user_wants_chart:
+                comparison_cols = detect_comparison_columns(df, user_message)
+                # Exclude whatever column would end up being the GROUPING
+                # axis (year/date/category) from the metrics list — a
+                # word like "year" in "for each year" can incidentally
+                # substring-match a numeric 'Year' column, which must
+                # never be treated as one of the metrics being compared.
+                _exclude_from_metrics = {
+                    c for c in (_find_year_like_column(df), month_col, group_col) if c
+                }
+                comparison_cols = [c for c in comparison_cols if c not in _exclude_from_metrics]
+                if len(comparison_cols) >= 2:
+                    comp_labels, comp_series, comp_group_col, comp_is_time_series = (
+                        _build_comparison_chart_data(df, comparison_cols, month_col, group_col)
+                    )
+                    if comp_labels and comp_series:
+                        comp_colors = parse_comparison_colors(user_message, comparison_cols)
+                        for s in comp_series:
+                            if s['label'] in comp_colors:
+                                s['color'] = comp_colors[s['label']]
+
+                        if chart_type_override in ('bar', 'barh', 'line'):
+                            comp_chart_type = chart_type_override
+                        elif chart_custom.chart_type in ('bar', 'barh', 'line'):
+                            comp_chart_type = chart_custom.chart_type
+                        elif wants_category_on_y_axis(user_message, comp_group_col):
+                            comp_chart_type = 'barh'
+                        elif comp_is_time_series:
+                            comp_chart_type = 'line'
+                        else:
+                            comp_chart_type = 'bar'
+
+                        comp_title = chart_custom.title or (
+                            f"{tabular_filename} — {' vs '.join(comparison_cols)} by {comp_group_col}"
+                        )
+                        comp_xlabel = chart_custom.xlabel or comp_group_col
+                        comp_ylabel = chart_custom.ylabel or 'Amount ($)'
+
+                        chart_service = ChartService.from_app_config(current_app.config)
+                        try:
+                            chart_image = chart_service.render_comparison_base64(
+                                comp_labels, comp_series,
+                                chart_type=comp_chart_type,
+                                title=comp_title,
+                                xlabel=comp_xlabel,
+                                ylabel=comp_ylabel,
+                                background_color=chart_custom.background_color,
+                            )
+                            chart_type_source = 'comparison'
+                            computed_context = (
+                                "AUTHORITATIVE DETERMINISTIC RESULT — DO NOT RECALCULATE:\n"
+                                f"Grouped by: {comp_group_col}\n"
+                                f"Categories: {', '.join(str(l) for l in comp_labels)}\n"
+                                + "\n".join(
+                                    f"{s['label']}: {', '.join(f'{v:,.2f}' for v in s['values'])}"
+                                    for s in comp_series
+                                )
+                            )
+                            result_response = (
+                                f"Here's the {' vs '.join(comparison_cols)} comparison by {comp_group_col}, "
+                                f"generated directly from the uploaded data."
+                            )
+                        except Exception:
+                            logger.exception("Comparison chart generation failed for columns: %s", comparison_cols)
 
             message_lower = user_message.lower()
             time_series_request = any(keyword in message_lower for keyword in (
@@ -760,6 +975,7 @@ def send_message():
                         noise_variance=chart_noise_variance,
                         background_color=chart_custom.background_color,
                         series_color=chart_custom.series_color,
+                        color_list=chart_custom.color_list,
                     )
                     chart_image = chart_choices[0]['image'] if chart_choices else None
                     variance_summary = _chart_variance(labels, values)
@@ -812,6 +1028,7 @@ def send_message():
                             noise_variance=chart_noise_variance,
                             background_color=chart_custom.background_color,
                             series_color=chart_custom.series_color,
+                            color_list=chart_custom.color_list,
                         )
                         chart_image = (
                             chart_choices[0]['image'] if chart_choices else None
@@ -863,6 +1080,7 @@ def send_message():
                             noise_variance=chart_noise_variance,
                             background_color=chart_custom.background_color,
                             series_color=chart_custom.series_color,
+                            color_list=chart_custom.color_list,
                         )
                         chart_image = (
                             chart_choices[0]['image'] if chart_choices else None
@@ -917,6 +1135,7 @@ def send_message():
                             noise_variance=chart_noise_variance,
                             background_color=chart_custom.background_color,
                             series_color=chart_custom.series_color,
+                            color_list=chart_custom.color_list,
                         )
                         chart_image = (
                             chart_choices[0]['image'] if chart_choices else None
@@ -940,6 +1159,12 @@ def send_message():
 
     if computed_context:
         prompt_text = f"{prompt_text}\n\n{computed_context}"
+
+    if column_ambiguity_notes:
+        prompt_text += (
+            "\n\nCOLUMN SELECTION NOTES (mention this to the user briefly if relevant):\n"
+            + "\n".join(f"- {note}" for note in column_ambiguity_notes)
+        )
 
     # --- NEW: system prompt now goes through classify_prompt_intent() /
     # system_prompt_for() instead of a single hardcoded string, so vague
@@ -1047,7 +1272,7 @@ def choose_chart():
     """Regenerate a selected chart with user-controlled visual settings."""
     data = request.get_json(silent=True) or {}
     chart_type = str(data.get('chart_type', '')).lower().strip()
-    allowed_types = {'bar', 'barh', 'line', 'area', 'pie'}
+    allowed_types = {'bar', 'barh', 'line', 'area', 'pie', 'histogram'}
     if chart_type not in allowed_types:
         return jsonify({'error': 'Unsupported chart type'}), 400
 
@@ -1074,6 +1299,9 @@ def choose_chart():
     noise_variance = float(noise_variance) if noise_variance not in (None, '') else None
     background_color = data.get('background_color') or None
     series_color = data.get('series_color') or None
+    color_list = data.get('color_list') or None
+    if color_list is not None and not isinstance(color_list, list):
+        color_list = None
 
     service = ChartService.from_app_config(current_app.config)
     try:
@@ -1091,6 +1319,7 @@ def choose_chart():
             noise_variance=noise_variance,
             background_color=background_color,
             series_color=series_color,
+            color_list=color_list,
         )
     except Exception:
         logger.exception('Selected chart regeneration failed')

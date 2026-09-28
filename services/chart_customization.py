@@ -305,6 +305,16 @@ def _parse_month_range(q: str) -> Optional[tuple]:
     q_match = re.search(r"\bq([1-4])\b", q)
     if q_match:
         quarter = int(q_match.group(1))
+        try:
+            from services.generic_chart_planner import mentions_fiscal_year
+            fiscal = mentions_fiscal_year(q)
+        except Exception:  # noqa: BLE001
+            fiscal = False
+        if fiscal:
+            # Financial-year wording: Q1 = Apr-Jun, Q2 = Jul-Sep, Q3 = Oct-Dec,
+            # Q4 = Jan-Mar (financial year is always April -> March).
+            start = (3 + (quarter - 1) * 3) % 12 + 1
+            return (start, start + 2)
         start = (quarter - 1) * 3 + 1
         return (start, start + 2)
 

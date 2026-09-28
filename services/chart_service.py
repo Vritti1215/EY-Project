@@ -54,9 +54,13 @@ BRAND_PALETTES = {
     # named a specific color/palette; an explicit request (e.g. "make it
     # white", "background white") is handled separately via
     # background_color/series_color in render_png_bytes and always wins.
-    'ey': ['#2E2E38', '#9DA0A6', '#FFE600', '#06B6D4'],
-    'ey_theme': ['#2E2E38', '#9DA0A6', '#FFE600', '#06B6D4'],
-    'black_yellow_grey_white': ['#2E2E38', '#9DA0A6', '#FFE600', '#06B6D4'],
+    # Order matters: this is also the fill order for a single-series
+    # bar/pie/line chart (category 1 gets color[0], etc.), so yellow and
+    # black — EY's two dominant brand colors — come first; grey and cyan
+    # are secondary accents for a 3rd/4th series.
+    'ey': ['#FFE600', '#2E2E38', '#9DA0A6', '#06B6D4'],
+    'ey_theme': ['#FFE600', '#2E2E38', '#9DA0A6', '#06B6D4'],
+    'black_yellow_grey_white': ['#FFE600', '#2E2E38', '#9DA0A6', '#06B6D4'],
 }
 
 # NOTE: the brand/theme palette is intentionally NEVER auto-extended with

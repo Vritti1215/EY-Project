@@ -405,16 +405,27 @@ def load_dataframe(filepath, file_type):
     return None
 
 
-def monthly_totals(df, month_col, value_col):
-    """Return a list of (month_num, month_label, total) sorted by month."""
+def monthly_totals(df, month_col, value_col, fiscal_start_month=4):
+    """
+    Return a list of (month_num, month_label, total), ordered starting from
+    the financial year's first month (Apr by default, matching this app's
+    FISCAL_YEAR_START_MONTH) rather than always Jan-Dec. This only reorders
+    which month comes first; a single calendar month's rows are still
+    summed together the same way regardless of year (this function has no
+    Year column to group by — see generic_chart_planner.py for the
+    year-aware chronological version used for multi-year "over time" charts).
+    """
     work = df[[month_col, value_col]].copy()
     work['_month_num'] = work[month_col].apply(month_to_num)
     work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
     work = work.dropna(subset=['_month_num', value_col])
     if work.empty:
         return []
-    grouped = work.groupby('_month_num')[value_col].sum().sort_index()
-    return [(int(m), MONTH_NUM_TO_SHORT[int(m)], float(v)) for m, v in grouped.items()]
+    grouped = work.groupby('_month_num')[value_col].sum()
+    start = int(fiscal_start_month) if fiscal_start_month else 1
+    ordered_months = [((m - start) % 12, m) for m in grouped.index]
+    ordered_months.sort()
+    return [(int(m), MONTH_NUM_TO_SHORT[int(m)], float(grouped[m])) for _, m in ordered_months]
 
 
 def quarterly_totals(df, month_col, value_col, fiscal_start_month=4):
@@ -470,6 +481,8 @@ def category_sums(df, group_col, value_col):
     """Sum a numeric column grouped by a categorical column. Case/
     whitespace variants of the same category are combined (see
     _standardize_category_label)."""
+    if group_col == value_col:
+        return [], []
     work = df[[group_col, value_col]].copy()
     work[value_col] = pd.to_numeric(work[value_col], errors='coerce')
     work = work.dropna(subset=[value_col, group_col])

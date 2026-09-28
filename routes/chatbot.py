@@ -12,6 +12,7 @@ import re
 import logging
 import json
 import statistics
+import pandas as pd
 from flask import Blueprint, render_template, request, jsonify, send_file, current_app
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
@@ -45,6 +46,11 @@ from services.chart_customization import (
 )
 from services.prompt_guidance import classify_prompt_intent, system_prompt_for, EDGE_CASE_INSTRUCTIONS
 from services.data_profile_service import build_data_profile, validate_profile
+from services.generic_chart_planner import (
+    plan_chart, plan_named_metrics, plan_from_ai, fallback_plan, render_plan_base64,
+    wants_visual, detect_intent, mentions_any_column, is_time_axis_word, ANALYTIC_INTENTS,
+    has_ai_cue, has_time_dimension, fy_availability, mentions_fiscal_year, ChartNotSupported,
+)
 # --------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
@@ -60,8 +66,38 @@ NO_FAKE_CODE_INSTRUCTION = (
     "output. If the user asked for a chart, a real chart image is generated separately "
     "and shown alongside your message — do not describe writing plotting code for it. "
     "Answer directly in plain prose and markdown tables only, using the real data/figures "
-    "already given to you in this conversation."
+    "already given to you in this conversation. "
+    "FINANCIAL YEAR RULE: 'financial year', 'fiscal year', 'FY', 'F.Y.', 'FYE', 'FYTD' and "
+    "'fiscal quarter' ALWAYS mean April to March (FY25 = April 2024 to March 2025; Q1 = Apr-Jun, "
+    "Q2 = Jul-Sep, Q3 = Oct-Dec, Q4 = Jan-Mar). Never treat them as a calendar year. "
+    "NEVER embed images, markdown image syntax (![...](...)), image links, or made-up chart "
+    "file names in your answer — the server attaches the real chart itself. If no chart was "
+    "attached this turn, say so plainly instead of pretending one exists."
 )
+
+
+_MD_IMAGE_RE = re.compile(r'!\[[^\]]*\]\([^)]*\)')
+
+
+def _strip_markdown_images(text):
+    """
+    The language model cannot create images, but it sometimes writes a
+    markdown image ("![Quarter-Level Metric Overview](...)") anyway, which
+    the browser renders as a broken-image icon next to the REAL chart.
+    Remove any such tag, and the now-empty "The chart" style heading that
+    often precedes it.
+    """
+    if not text:
+        return text
+    cleaned = _MD_IMAGE_RE.sub('', text)
+    cleaned = re.sub(r'(?im)^\s*(?:#{1,6}\s*|\*\*)?the chart(?:\*\*)?\s*:?\s*$', '', cleaned)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    return cleaned.strip()
+
+
+# Column names that only describe WHEN (not WHAT) — a question that merely
+# mentions "quarterly" must not be treated as "group by the Quarter column".
+_TIME_COLUMN_NAMES = {'quarter', 'qtr', 'month', 'year', 'date', 'period', 'day', 'week', 'month number', 'time'}
 
 
 def _parse_bool_field(value):
@@ -182,9 +218,10 @@ def _build_comparison_chart_data(df, comparison_cols, month_col, group_col):
             return labels, series, year_col, False
 
     if month_col:
+        _fsm = current_app.config.get('FISCAL_YEAR_START_MONTH', 4)
         pairs_per_col = {}
         for col in comparison_cols:
-            monthly = monthly_totals(df, month_col, col)
+            monthly = monthly_totals(df, month_col, col, fiscal_start_month=_fsm)
             pairs_per_col[col] = [(name, total) for _, name, total in monthly]
         labels, series = _merge_series_by_label(pairs_per_col)
         if labels:
@@ -725,7 +762,11 @@ def send_message():
             # a pure follow-up like "put the title as Q1 Sales and color
             # the bars red" generate/regenerate a graph on its own,
             # instead of requiring the user to also type "chart".
-            user_wants_chart = wants_chart(user_message, chart_keywords) or has_customization(chart_custom)
+            user_wants_chart = (
+                wants_chart(user_message, chart_keywords)
+                or has_customization(chart_custom)
+                or wants_visual(user_message)
+            )
 
             month_col = find_column(df.columns, MONTH_COLUMN_ALIASES) \
                 or find_date_column_generic(df, user_message)
@@ -799,6 +840,11 @@ def send_message():
             # values, exact counts above) already ran against the full
             # dataset — only the chart/aggregate paths below see the
             # filtered window.
+            # (Skipped for financial-year wording: "Q2 FY25" / "H1 FY25" / "FY25"
+            # are resolved to exact Apr-Mar date windows by the chart planner,
+            # and a calendar-month pre-filter would silently strip the data.)
+            if mentions_fiscal_year(user_message):
+                chart_custom.date_range = None   # the planner scopes FY windows exactly
             if chart_custom.date_range and month_col:
                 df = apply_month_range_filter(df, month_col, chart_custom.date_range)
 
@@ -885,11 +931,219 @@ def send_message():
                         except Exception:
                             logger.exception("Comparison chart generation failed for columns: %s", comparison_cols)
 
+            # --- NEW: generic / business-language chart planner --------------
+            # Answers questions that name NO column and NO chart type:
+            #   1. rule-based planner (13 analytical intents: trend, costs vs
+            #      income, efficiency, before/after, customers, ...),
+            #   2. named-metric planner ("plot Marketing Expense over time",
+            #      "x axis period, y axis revenue") — chronological, not
+            #      collapsed into 12 month buckets,
+            #   3. AI planner for anything else: the model only PICKS real
+            #      columns / aggregation / chart type as JSON; every column is
+            #      validated and all numbers are computed in pandas.
+            # An explicit category column ("... by region") still goes to the
+            # original branches below, unchanged.
+            _group_hit = detect_group_column(df.columns, user_message)
+            _user_named_category = (
+                _group_hit is not None
+                and re.sub(r'\s+', ' ', str(_group_hit).strip().lower()) not in _TIME_COLUMN_NAMES
+            )
+            if _user_named_category:
+                # detect_group_column() also returns numeric MEASURE columns
+                # ("Revenue", "Marketing Expense") — those are metrics to plot,
+                # not a category to group by.
+                try:
+                    _gs = df[_group_hit]
+                    if pd.api.types.is_numeric_dtype(_gs) and (
+                        _gs.nunique(dropna=True) > 12
+                        or _gs.nunique(dropna=True) / max(len(_gs), 1) > 0.3
+                    ):
+                        _user_named_category = False
+                except Exception:
+                    pass
+            # An axis instruction only counts as "explicit" when BOTH axes resolve
+            # to real columns (the parser also mis-reads phrases like "the
+            # relationship between income and spending" as axis fields).
+            _axis_x_ok = _resolve_axis_field(chart_custom.x_axis_field, df, month_col, value_col)[0] is not None
+            _axis_y_ok = _resolve_axis_field(chart_custom.y_axis_field, df, month_col, value_col)[0] is not None
+            _explicit_axes = bool(chart_custom.x_axis_field and chart_custom.y_axis_field and _axis_x_ok and _axis_y_ok)
+            _axes_time = any(
+                is_time_axis_word(t) for t in (chart_custom.x_axis_field, chart_custom.y_axis_field)
+            )
+            if _axes_time:
+                _explicit_axes = True
+            _planner_intent = detect_intent(user_message)
+            _generic_question = not mentions_any_column(df, user_message)
+
+            # A specific financial year was named (e.g. "FY26", "FY24 vs FY25")
+            # -> check FIRST whether the data actually covers it. FY is 1 Apr -
+            # 31 Mar throughout this app (services/insight_service.fiscal_quarter's
+            # default). If the requested year(s) simply aren't in the file, say
+            # so plainly instead of drawing a chart from whatever data exists.
+            _fy_check = fy_availability(df, user_message) if mentions_fiscal_year(user_message) else None
+            if _fy_check and computed_context is None and user_wants_chart:
+                _missing_fy = [l for l, ok in _fy_check['available'].items() if not ok]
+                if _missing_fy and len(_missing_fy) == len(_fy_check['available']):
+                    span = (
+                        f"The uploaded data only covers {_fy_check['data_min'].strftime('%b %Y')} to "
+                        f"{_fy_check['data_max'].strftime('%b %Y')}."
+                        if _fy_check['data_min'] is not None else
+                        "The uploaded data has no usable date column at all."
+                    )
+                    computed_context = (
+                        "NO CHART COULD BE GENERATED: the user asked about "
+                        f"{', '.join(_missing_fy)}, but that period is not in the uploaded data. {span}\n"
+                        "Tell the user plainly that this financial year isn't in their data and state "
+                        "the date range the data DOES cover. Do not invent figures or a chart."
+                    )
+            # Column-free, or analytical wording the rules don't model
+            # ("which product performs best", "relationship between income and
+            # spending") -> the AI planner may choose the columns.
+            _ai_eligible = (
+                _planner_intent is None
+                and (_generic_question or has_ai_cue(user_message))
+                and not _explicit_axes
+            )
+
+            if (
+                computed_context is None
+                and user_wants_chart
+                and (not _user_named_category or _ai_eligible)
+                and (not _explicit_axes or _axes_time)
+            ):
+                planner_plan = None
+                try:
+                    if _axes_time:
+                        planner_plan = plan_named_metrics(
+                            df, user_message,
+                            axis_hints=(chart_custom.x_axis_field or '', chart_custom.y_axis_field or ''),
+                        )
+                    else:
+                        if _planner_intent is not None and not _user_named_category:
+                            planner_sheets = None
+                            if _planner_intent == 'granularity_compare' and tabular_file_type in ('xlsx', 'xls'):
+                                try:
+                                    planner_sheets = pd.read_excel(tabular_filepath, sheet_name=None)
+                                except Exception:
+                                    planner_sheets = None
+                            planner_plan = plan_chart(
+                                df, user_message, sheets=planner_sheets,
+                                allow_generic_time=not _user_named_category,
+                            )
+                        if not planner_plan and not _user_named_category:
+                            planner_plan = plan_named_metrics(df, user_message)
+                        # Question the rules did not recognise (or an analytical intent
+                        # they could not satisfy): let the AI choose the columns
+                        # (validated + computed deterministically).
+                        if not planner_plan and (
+                            (_planner_intent in ANALYTIC_INTENTS and not _user_named_category)
+                            or _ai_eligible
+                        ):
+                            planner_plan = plan_from_ai(df, user_message, ai_service)
+                except ChartNotSupported as exc:
+                    computed_context = (
+                        f"NO CHART COULD BE GENERATED: {exc}\n"
+                        f"Available columns: {', '.join(str(c) for c in df.columns)}.\n"
+                        "Tell the user plainly, in your own words, that this isn't something the "
+                        "uploaded data can show, using the reason above, and suggest what they could "
+                        "ask instead. Do not invent data or a chart."
+                    )
+                except Exception:
+                    logger.exception("Generic chart planner failed")
+
+                if planner_plan:
+                    try:
+                        hint = planner_plan.get('chart_type_hint')
+                        use_legacy_renderer = bool(
+                            planner_plan.get('legacy_compatible')
+                            and (
+                                chart_type_override or chart_palette_override or chart_style_override
+                                or has_customization(chart_custom)
+                                or hint in ('pie', 'area', 'barh')
+                            )
+                        )
+                        if use_legacy_renderer:
+                            # Single-series plan + a specific type/colour/title was
+                            # requested: keep the existing renderer so every
+                            # customization and the alternatives panel still work.
+                            labels = planner_plan['labels']
+                            values = planner_plan['series'][0]['values']
+                            chart_service = ChartService.from_app_config(current_app.config)
+                            resolved_chart_type, chart_type_source, chart_alternatives = _resolve_chart_set(
+                                chart_type_override or hint, labels, values,
+                                is_time_series=bool(planner_plan.get('is_time_series')),
+                                group_label=planner_plan.get('ylabel'),
+                            )
+                            chart_choices = _render_chart_options(
+                                chart_service, labels, values, resolved_chart_type, chart_alternatives,
+                                chart_custom.title or planner_plan['title'],
+                                chart_custom.xlabel or planner_plan.get('xlabel', ''),
+                                chart_custom.ylabel or planner_plan.get('ylabel', ''),
+                                chart_palette_override, chart_style_override,
+                                # dense charts (many periods) are unreadable with a
+                                # label on every point unless the user asked for them
+                                show_data_labels=(
+                                    chart_custom.show_data_labels
+                                    if chart_custom.show_data_labels is not None
+                                    else len(labels) <= 16
+                                ),
+                                show_variance=bool(chart_custom.show_variance),
+                                show_trend=bool(chart_custom.show_trend),
+                                noise_variance=chart_noise_variance,
+                                background_color=chart_custom.background_color,
+                                series_color=chart_custom.series_color,
+                                color_list=chart_custom.color_list,
+                            )
+                            chart_image = chart_choices[0]['image'] if chart_choices else None
+                        else:
+                            chart_image = render_plan_base64(
+                                planner_plan,
+                                background_color=chart_custom.background_color,
+                                title=chart_custom.title,
+                                xlabel=chart_custom.xlabel,
+                                ylabel=chart_custom.ylabel,
+                                series_color=chart_custom.series_color,
+                            )
+                            chart_type_source = f"planner:{planner_plan['intent']}"
+                            chart_choices = []
+                    except Exception:
+                        logger.exception("Rendering planner chart failed (%s)", planner_plan.get('intent'))
+                        chart_image = None
+
+                    if chart_image:
+                        computed_context = (
+                            planner_plan['facts']
+                            + "\nDescribe what this chart shows in 3-6 sentences using ONLY the figures above; "
+                              "state any assumption listed above. Do not embed images or links — "
+                              "the chart is attached automatically."
+                        )
+                        if planner_plan.get('reason'):
+                            computed_context += f"\nChart design note: {planner_plan['reason']}"
+                        variance_summary = None
+                _no_time_dim = _planner_intent == 'generic_time' and not has_time_dimension(df)
+                if (not chart_image and not _explicit_axes and not _user_named_category
+                        and (_planner_intent in ANALYTIC_INTENTS or _no_time_dim)):
+                    # The file cannot support this question (e.g. "workforce" with
+                    # no headcount column, or "costs vs income" with no cost
+                    # columns). Do NOT fall through to the old "count rows of the
+                    # first category" chart — that produced the bogus
+                    # "Quarter: 15/15/15/15" chart.
+                    computed_context = (
+                        "NO CHART COULD BE GENERATED for this request because the uploaded "
+                        "data does not contain the columns/time dimension needed "
+                        f"(request type: {_planner_intent}"
+                        f"{'; the file has no date/time column' if _no_time_dim else ''}).\n"
+                        f"Available columns: {', '.join(str(c) for c in df.columns)}.\n"
+                        "Tell the user plainly which kind of column is missing and suggest "
+                        "what they could ask instead. Do not invent data or images."
+                    )
+
             message_lower = user_message.lower()
             time_series_request = any(keyword in message_lower for keyword in (
                 'sales', 'revenue', 'income', 'profit', 'expense',
                 'amount', 'financial', 'month', 'monthly', 'quarter',
-                'q1', 'q2', 'q3', 'q4', 'qtr', 'date', 'period'
+                'q1', 'q2', 'q3', 'q4', 'qtr', 'date', 'period',
+                'over time', 'trend', 'timeline', 'yearly', 'annual', 'growth'
             )) and not explicit_group_match
 
             axis_x_col, axis_x_kind = _resolve_axis_field(chart_custom.x_axis_field, df, month_col, value_col)
@@ -908,6 +1162,13 @@ def send_message():
                 explicit_measure_col, explicit_category_col = axis_y_col, axis_x_col
                 explicit_category_kind, explicit_measure_on_x = axis_x_kind, False
 
+            # Guard: "x axis period, y axis revenue" can resolve BOTH axes to the
+            # same column (e.g. the measure column), which used to crash with
+            # "TypeError: arg must be a list, tuple, 1-d array, or Series".
+            if explicit_measure_col is not None and explicit_measure_col == explicit_category_col:
+                explicit_measure_col = explicit_category_col = None
+                explicit_category_kind = explicit_measure_on_x = None
+
             if computed_context is None and explicit_measure_col and explicit_category_col and user_wants_chart:
                 # An explicit "x axis should be X, y axis should be Y"
                 # instruction is the strongest possible signal — honor it
@@ -918,7 +1179,10 @@ def send_message():
                 # values, which is what produced a one-bar-per-row chart
                 # before this branch existed.
                 if explicit_category_kind == 'date':
-                    monthly = monthly_totals(df, explicit_category_col, explicit_measure_col)
+                    monthly = monthly_totals(
+                        df, explicit_category_col, explicit_measure_col,
+                        fiscal_start_month=current_app.config.get('FISCAL_YEAR_START_MONTH', 4),
+                    )
                     labels = [name for _, name, _ in monthly]
                     values = [total for _, _, total in monthly]
                 else:
@@ -1036,7 +1300,7 @@ def send_message():
                         variance_summary = _chart_variance(labels, values)
 
             elif computed_context is None and month_col and value_col:
-                monthly = monthly_totals(df, month_col, value_col)
+                monthly = monthly_totals(df, month_col, value_col, fiscal_start_month=fiscal_start)
                 quarterly = quarterly_totals(df, month_col, value_col, fiscal_start)
 
                 if monthly:
@@ -1142,6 +1406,43 @@ def send_message():
                         )
                         variance_summary = _chart_variance(labels, values)
 
+            # --- NEW: never end a chart request with no chart at all. If the
+            # user clearly asked for a chart (chart word / customization) but
+            # none of the branches above produced one, draw the most sensible
+            # best-effort chart from the real data (trend of the main measure,
+            # or the main measure by its main category) and say what was assumed.
+            _chart_blocked = str(computed_context or '').startswith('NO CHART COULD BE GENERATED')
+            if user_wants_chart and not chart_image and result_response is None and not _chart_blocked:
+                try:
+                    try:
+                        fb_plan = plan_from_ai(df, user_message, ai_service)
+                    except ChartNotSupported:
+                        fb_plan = None
+                    fb_plan = fb_plan or fallback_plan(df, user_message)
+                    if fb_plan:
+                        fb_image = render_plan_base64(
+                            fb_plan,
+                            background_color=chart_custom.background_color,
+                            title=chart_custom.title,
+                            xlabel=chart_custom.xlabel,
+                            ylabel=chart_custom.ylabel,
+                            series_color=chart_custom.series_color,
+                        )
+                        chart_image = fb_image
+                        chart_type_source = 'planner:fallback'
+                        chart_choices = []
+                        fb_context = (
+                            fb_plan['facts']
+                            + "\nDescribe what this chart shows using ONLY the figures above and "
+                              "state the assumption. Do not embed images or links — the chart is "
+                              "attached automatically."
+                        )
+                        computed_context = (
+                            f"{computed_context}\n\n{fb_context}" if computed_context else fb_context
+                        )
+                except Exception:
+                    logger.exception("Fallback chart failed")
+
     if profile_ai_context:
         prompt_text += (
             "\n\nSTRUCTURED DATA PROFILE (AUTHORITATIVE SCHEMA):\n"
@@ -1159,6 +1460,20 @@ def send_message():
 
     if computed_context:
         prompt_text = f"{prompt_text}\n\n{computed_context}"
+
+    # Tell the model the truth about the chart so it never invents one.
+    if chart_image:
+        prompt_text += (
+            "\n\nCHART STATUS: a real chart image HAS been generated by the server and is shown "
+            "to the user below your answer. Explain what it shows. Do not embed any image."
+        )
+    elif tabular_filepath and (wants_chart(user_message, current_app.config.get('CHART_TRIGGER_KEYWORDS'))
+                               or wants_visual(user_message)):
+        prompt_text += (
+            "\n\nCHART STATUS: NO chart could be generated for this request. Say so plainly, "
+            "explain why in one sentence (e.g. the needed column is missing), and suggest a "
+            "specific alternative. Never embed images, image links, or describe a chart as if it existed."
+        )
 
     if column_ambiguity_notes:
         prompt_text += (
@@ -1216,6 +1531,9 @@ def send_message():
         result = ai_service.get_chat_response(
             prompt_text, conversation_history=history_dicts, system_prompt=system_prompt
         )
+
+    # The model can't draw images; strip any fake markdown image it wrote.
+    result['response'] = _strip_markdown_images(result.get('response'))
 
     display_prompt = user_message
     if uploaded_files:

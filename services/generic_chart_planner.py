@@ -430,7 +430,7 @@ def build_period_frame(df: pd.DataFrame):
         if pd.api.types.is_numeric_dtype(s) or _norm(c) in ("month", "quarter"):
             continue
         looks_datey = any(k in _norm(c) for k in ("date", "period", "time", "day", "month"))
-        if looks_datey or s.dtype == object:
+        if looks_datey or not pd.api.types.is_numeric_dtype(s):
             parsed = _parse_dates(s)
             if parsed.notna().mean() >= 0.6 and parsed.dropna().nunique() >= 3:
                 date_col = c
@@ -1995,7 +1995,7 @@ def fallback_plan(df: pd.DataFrame, question: str):
                                        [f"  - {l}: {_fmt_num(v, 2)}" for l, v in zip(labels, vals)])
             return plan
     # category + number
-    cats = [c for c in df.columns if df[c].dtype == object and 2 <= df[c].nunique(dropna=True) <= 25]
+    cats = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c]) and not pd.api.types.is_datetime64_any_dtype(df[c]) and 2 <= df[c].nunique(dropna=True) <= 25]
     numeric = [c for c in _numeric_columns(df) if not _is_time_like_name(c)]
     if cats and numeric:
         cat, num = cats[0], numeric[0]
@@ -2064,6 +2064,9 @@ def _nan(v):
 
 def render_plan_png(plan, background_color=None, title=None, xlabel=None, ylabel=None,
                     series_color=None, dpi=150, figsize=(10, 6)) -> bytes:
+    if plan.get("kind") == "panels":
+        from services.dynamic_chart_engine import render_panels_png
+        return render_panels_png(plan, background_color=background_color, title=title, series_color=series_color)
     background = background_color or "#FFFFFF"
     text = _contrast(background)
     kind = plan["kind"]

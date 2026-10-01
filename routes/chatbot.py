@@ -51,6 +51,7 @@ from services.generic_chart_planner import (
     wants_visual, detect_intent, mentions_any_column, is_time_axis_word, ANALYTIC_INTENTS,
     has_ai_cue, has_time_dimension, fy_availability, mentions_fiscal_year, ChartNotSupported,
 )
+from services.dynamic_chart_engine import is_visual_request, plan_dynamic
 # --------------------------------------------------------------------------
 
 logger = logging.getLogger(__name__)
@@ -679,6 +680,7 @@ def send_message():
                 tabular_filename = fallback.filename
 
     chart_image = None
+    dynamic_summary = None
     chart_type_source = None
     chart_alternatives = []
     chart_choices = []
@@ -705,7 +707,13 @@ def send_message():
                 profile_warnings = profile_issues
                 logger.warning(f"Data profile validation issues for {tabular_filename}: {profile_issues}")
 
-            if is_unique_value_query(user_message):
+            _chart_asked = (
+                wants_chart(user_message, current_app.config.get('CHART_TRIGGER_KEYWORDS'))
+                or wants_visual(user_message) or is_visual_request(user_message)
+                or has_customization(chart_custom)
+            )
+
+            if not _chart_asked and is_unique_value_query(user_message):
                 unique_col = find_column_for_question(df.columns, user_message)
 
                 if not unique_col and any(word in user_message.lower()
@@ -730,7 +738,7 @@ def send_message():
                             f"Unique values: {', '.join(values)}\n"
                         )
 
-            if result_response is None and is_count_query(user_message):
+            if result_response is None and not _chart_asked and is_count_query(user_message):
                 question_col = find_column_for_question(df.columns, user_message)
                 requested_time = extract_time_from_question(user_message)
 
@@ -766,6 +774,7 @@ def send_message():
                 wants_chart(user_message, chart_keywords)
                 or has_customization(chart_custom)
                 or wants_visual(user_message)
+                or is_visual_request(user_message)
             )
 
             month_col = find_column(df.columns, MONTH_COLUMN_ALIASES) \
@@ -943,6 +952,30 @@ def send_message():
             #      validated and all numbers are computed in pandas.
             # An explicit category column ("... by region") still goes to the
             # original branches below, unchanged.
+            # --- Dynamic chart engine: comparison / ranking / share / relationship /
+            # biggest-changes / unusual / overview for ANY dataset. Skipped when the
+            # user customised type/colour/axes (legacy renderer handles those).
+            if (computed_context is None and user_wants_chart and not chart_type_override
+                    and not chart_palette_override and not chart_style_override
+                    and not chart_custom.x_axis_field and not chart_custom.y_axis_field
+                    and not mentions_fiscal_year(user_message)):
+                try:
+                    _dyn = plan_dynamic(df, user_message, detect_intent(user_message))
+                    if _dyn:
+                        chart_image = render_plan_base64(
+                            _dyn, background_color=chart_custom.background_color, title=chart_custom.title)
+                        chart_type_source = f"dynamic:{_dyn['intent']}"
+                        chart_choices = []
+                        dynamic_summary = _dyn.get('summary')
+                        computed_context = (
+                            _dyn['facts']
+                            + "\nExplain what this chart shows in 4-7 sentences using ONLY the figures above, "
+                              "include the comparison (leader vs laggard, share, gap), and state any assumption. "
+                              "Do not embed images or links — the chart is attached automatically."
+                        )
+                except Exception:
+                    logger.exception("Dynamic chart engine failed")
+
             _group_hit = detect_group_column(df.columns, user_message)
             _user_named_category = (
                 _group_hit is not None
@@ -1531,6 +1564,10 @@ def send_message():
         result = ai_service.get_chat_response(
             prompt_text, conversation_history=history_dicts, system_prompt=system_prompt
         )
+
+    if dynamic_summary and chart_image and re.match(
+            r"\s*(I'm sorry, the AI service|I encountered an error)", result.get('response') or ''):
+        result['response'] = dynamic_summary
 
     # The model can't draw images; strip any fake markdown image it wrote.
     result['response'] = _strip_markdown_images(result.get('response'))
